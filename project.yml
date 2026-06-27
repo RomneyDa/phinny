@@ -1,0 +1,83 @@
+name: Phinny
+options:
+  bundleIdPrefix: com.dallinromney
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# Two build configurations, both produced from the same source. The build
+# scripts apply the per-channel entitlements + signing identity at codesign
+# time (ad-hoc for local dev, Developer ID for distribution). See README.md.
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  # SQLite access layer - clean, typed, well documented. Storage lives in
+  # ~/.phinny/phinny.sqlite (see Database.swift).
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "7.0.0"
+  # YAML config parsing - ~/.phinny/config.yaml (see Config.swift).
+  Yams:
+    url: https://github.com/jpsim/Yams
+    from: "5.1.0"
+
+targets:
+  Phinny:
+    type: application
+    platform: macOS
+    # XcodeGen auto-categorizes each entry by file type: .swift -> compile,
+    # .xcassets / .sqlite -> copy into the app bundle as resources.
+    sources:
+      - path: Sources
+      - path: Resources/Assets.xcassets
+      # Bundled sample data shown when no SimpleFIN account is connected.
+      # Regenerate with scripts/generate-demo-db.sh.
+      - path: Resources/phinny-demo.sqlite
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Phinny
+        CFBundleName: Phinny
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "© 2026 Dallin Romney"
+        # macOS 26 / Swift 6.x runtime workaround (same as the sibling Spurkle
+        # app): swift_task_isCurrentExecutor can SIGSEGV during SwiftUI body
+        # evaluation. `legacy` selects the non-crashing executor-check path.
+        # Remove once the toolchain bug is fixed.
+        LSEnvironment:
+          SWIFT_IS_CURRENT_EXECUTOR_LEGACY_MODE_OVERRIDE: legacy
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dallinromney.phinny
+        # Default entitlements for the xcodebuild step: sandboxed, no restricted
+        # entitlements, so an ad-hoc build with no provisioning profile launches.
+        # build-signed-local.sh re-signs with the Developer ID variant.
+        CODE_SIGN_ENTITLEMENTS: Resources/Phinny.dev.entitlements
+        PRODUCT_NAME: Phinny
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Swift 5 language mode + complete strict concurrency: full compile-time
+        # actor-isolation checking without the Swift 6 runtime enforcement that
+        # crashes on macOS 26 (see LSEnvironment note above).
+        SWIFT_VERSION: "5.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+        # Local/dev builds sign ad-hoc; build-signed-local.sh re-signs Developer ID.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEBUG
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: Yams
+        product: Yams

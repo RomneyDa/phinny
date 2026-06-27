@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phinny - an unofficial SimpleFIN viewer for macOS</title>
+<meta name="description" content="Phinny is an unofficial SimpleFIN viewer for macOS. It syncs your bank data and shows your income and spending in beautiful native charts. Local-first and private." />
+<meta property="og:title" content="Phinny - an unofficial SimpleFIN viewer for macOS" />
+<meta property="og:description" content="An unofficial SimpleFIN viewer for macOS. See your income and spending in beautiful native charts. Local-first and private." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="./icon-512.png" />
+<link rel="icon" href="./icon.png" />
+<style>
+  :root{
+    --bg:#0d0f17; --bg2:#12141f; --card:#171a26; --border:#262a3a;
+    --text:#eef0f7; --muted:#9aa0b4;
+    --indigo:#6366f1; --violet:#9a5cf6; --emerald:#29bb82; --coral:#f77061;
+    --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--violet); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:980px; margin:0 auto; padding:0 24px}
+  .glow{position:fixed; inset:0; z-index:-1; overflow:hidden}
+  .glow::before,.glow::after{content:""; position:absolute; width:620px; height:620px; border-radius:50%; filter:blur(120px); opacity:.22}
+  .glow::before{background:var(--indigo); top:-220px; left:-160px}
+  .glow::after{background:var(--violet); bottom:-260px; right:-160px}
+
+  header{padding:84px 0 48px; text-align:center}
+  .badge{
+    display:inline-flex; gap:8px; align-items:center; font-size:13px; color:var(--muted);
+    border:1px solid var(--border); background:var(--bg2); padding:6px 14px; border-radius:999px; margin-bottom:28px;
+  }
+  .appicon{width:112px; height:112px; border-radius:24px; box-shadow:0 18px 50px rgba(99,102,241,.35); margin-bottom:22px}
+  h1{font-size:clamp(38px,6vw,60px); line-height:1.05; margin:.1em 0 .25em; letter-spacing:-.02em}
+  .grad{background:linear-gradient(120deg,var(--indigo),var(--violet)); -webkit-background-clip:text; background-clip:text; color:transparent}
+  .sub{font-size:clamp(17px,2.4vw,21px); color:var(--muted); max-width:620px; margin:0 auto 30px}
+  .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap}
+  .btn{
+    display:inline-flex; align-items:center; gap:9px; padding:13px 24px; border-radius:12px; font-weight:600; font-size:15px;
+    border:1px solid transparent; cursor:pointer;
+  }
+  .btn-primary{background:linear-gradient(120deg,var(--indigo),var(--violet)); color:#fff}
+  .btn-primary:hover{text-decoration:none; filter:brightness(1.08)}
+  .btn-ghost{border-color:var(--border); color:var(--text); background:var(--bg2)}
+  .btn-ghost:hover{text-decoration:none; border-color:#3a3f55}
+
+  .shot{margin:54px auto 0; max-width:820px}
+  .shot img{width:100%; border-radius:var(--radius); border:1px solid var(--border); box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  .shot .ph{
+    width:100%; aspect-ratio:16/10; border-radius:var(--radius); border:1px dashed var(--border);
+    background:linear-gradient(160deg,var(--bg2),var(--card)); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:14px;
+  }
+
+  section{padding:64px 0}
+  h2{font-size:clamp(26px,3.6vw,34px); letter-spacing:-.01em; margin:0 0 8px}
+  .lead{color:var(--muted); margin:0 0 36px; font-size:17px}
+
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:18px}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:24px}
+  .card .ico{width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:20px; margin-bottom:14px;
+    background:linear-gradient(120deg,rgba(99,102,241,.18),rgba(154,92,246,.18)); border:1px solid var(--border)}
+  .card h3{margin:0 0 6px; font-size:18px}
+  .card p{margin:0; color:var(--muted); font-size:15px}
+
+  .steps{counter-reset:s; display:grid; gap:16px}
+  .step{display:flex; gap:16px; align-items:flex-start; background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:20px 22px}
+  .step::before{counter-increment:s; content:counter(s); flex:0 0 34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    font-weight:700; background:linear-gradient(120deg,var(--indigo),var(--violet)); color:#fff}
+  .step h3{margin:2px 0 4px; font-size:17px}
+  .step p{margin:0; color:var(--muted); font-size:15px}
+
+  .privacy{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px}
+  .pill{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:22px}
+  .pill h3{margin:0 0 6px; font-size:16px}
+  .pill p{margin:0; color:var(--muted); font-size:14px}
+  .pill code{background:var(--bg); padding:2px 6px; border-radius:6px; font-size:13px; color:var(--text)}
+
+  footer{border-top:1px solid var(--border); padding:36px 0 60px; color:var(--muted); font-size:14px; text-align:center}
+  footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="glow"></div>
+
+<header>
+  <div class="wrap">
+    <div class="badge">● Unofficial SimpleFIN viewer · macOS 14+ · local-first</div>
+    <div><img class="appicon" src="./icon.png" alt="Phinny app icon" /></div>
+    <h1>See your money,<br><span class="grad">beautifully.</span></h1>
+    <p class="sub">Phinny is an unofficial <a href="https://simplefin.org">SimpleFIN</a> viewer for macOS. It syncs your bank data and turns your income and spending into beautiful native charts, all stored privately on your Mac.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/RomneyDa/phinny/releases">↓ Download for macOS</a>
+      <a class="btn btn-ghost" href="https://github.com/RomneyDa/phinny">View on GitHub</a>
+    </div>
+    <div class="shot">
+      <img src="./screenshot.png" alt="Phinny dashboard" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+      <div class="ph" style="display:none">Dashboard screenshot</div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>Everything you need, nothing you don't</h2>
+    <p class="lead">No spreadsheets, no manual imports, no accounts to create. Connect once and watch.</p>
+    <div class="grid">
+      <div class="card"><div class="ico">📊</div><h3>Beautiful charts</h3><p>Income vs. spending, monthly net cash flow, and top spending - rendered with native Swift Charts.</p></div>
+      <div class="card"><div class="ico">🔄</div><h3>Automatic sync</h3><p>Refreshes on launch when data is stale, carefully staying within SimpleFIN's daily request budget.</p></div>
+      <div class="card"><div class="ico">🔒</div><h3>Private by design</h3><p>Data lives in a local SQLite file. Bank credentials live in your macOS Keychain. Nothing is uploaded.</p></div>
+      <div class="card"><div class="ico">🏦</div><h3>Any bank</h3><p>SimpleFIN connects to thousands of institutions with read-only access - you stay in control.</p></div>
+      <div class="card"><div class="ico">🪶</div><h3>Light &amp; native</h3><p>A real SwiftUI app. No Electron, no browser, no background daemons.</p></div>
+      <div class="card"><div class="ico">🧪</div><h3>Try before you connect</h3><p>A one-click demo loads sample data so you can explore the app instantly.</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="background:var(--bg2); border-block:1px solid var(--border)">
+  <div class="wrap">
+    <h2>Up and running in a minute</h2>
+    <p class="lead">Three steps from download to dashboard.</p>
+    <div class="steps">
+      <div class="step"><div><h3>Get a SimpleFIN token</h3><p>At <a href="https://simplefin.org">simplefin.org</a>, connect your bank and create a one-time setup token.</p></div></div>
+      <div class="step"><div><h3>Paste it into Phinny</h3><p>Phinny exchanges it once and keeps only the read-only access URL - securely in your Keychain.</p></div></div>
+      <div class="step"><div><h3>Watch your money</h3><p>Your accounts and transactions sync into beautiful charts. Refresh anytime with ⌘R.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Where your data lives</h2>
+    <p class="lead">Phinny is local-first. You can open, back up, or delete everything yourself.</p>
+    <div class="privacy">
+      <div class="pill"><h3>📁 Your transactions</h3><p>A plain SQLite database at <code>~/.phinny/phinny.sqlite</code>.</p></div>
+      <div class="pill"><h3>⚙️ Your settings</h3><p>Human-readable YAML at <code>~/.phinny/config.yaml</code>.</p></div>
+      <div class="pill"><h3>🔑 Your credentials</h3><p>The SimpleFIN access URL is encrypted in the macOS Keychain - never on disk.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Phinny · a <a href="https://dallinromney.com">Dallin Romney</a> project · <a href="https://github.com/RomneyDa/phinny">source on GitHub</a></p>
+    <p>© 2026 Dallin Romney. Phinny is not affiliated with SimpleFIN.</p>
+  </div>
+</footer>
+</body>
+</html>

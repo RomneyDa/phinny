@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Phinny entitlements (local dev + Developer ID distribution use the same set).
+
+  NO App Sandbox on purpose. Phinny stores its config + database in ~/.phinny
+  (a global config dir, per design). The App Sandbox would confine the app to
+  ~/Library/Containers/... and break that requirement. A Developer ID app that
+  is signed with the hardened runtime + notarized does NOT need the sandbox -
+  the sandbox is only mandatory for the Mac App Store.
+
+  Hardened runtime is enabled (ENABLE_HARDENED_RUNTIME=YES in project.yml) and
+  required for notarization. With no sandbox, normal file + network access works
+  without any extra entitlements, so this dict is intentionally empty.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
