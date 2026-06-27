@@ -142,11 +142,15 @@ enum SimpleFINClient {
                 balanceDate: raw.balanceDate
             ))
             for t in raw.transactions ?? [] {
+                // SimpleFIN leaves `posted` at 0 for pending transactions and
+                // supplies `transacted_at` instead. Fall back to it so pending
+                // items sort and display with the right date.
+                let effectivePosted = t.posted != 0 ? t.posted : (t.transactedAt ?? t.posted)
                 transactions.append(Transaction(
                     id: "\(raw.id)|\(t.id)",
                     providerId: t.id,
                     accountId: raw.id,
-                    posted: t.posted,
+                    posted: effectivePosted,
                     amount: Double(t.amount) ?? 0,
                     descriptionText: t.description ?? "",
                     payee: t.payee,
@@ -190,12 +194,18 @@ enum SimpleFINClient {
     private struct RawTransaction: Decodable {
         let id: String
         let posted: Int
+        let transactedAt: Int?
         let amount: String
         let description: String?
         let payee: String?
         let memo: String?
         let pending: Bool?
         let extra: [String: AnyCodable]?
+
+        enum CodingKeys: String, CodingKey {
+            case id, posted, amount, description, payee, memo, pending, extra
+            case transactedAt = "transacted_at"
+        }
     }
 }
 
