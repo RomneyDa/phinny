@@ -9,12 +9,15 @@ struct MortgageEditorView: View {
     var onSaved: (Mortgage) -> Void = { _ in }
 
     @State private var name: String
+    @State private var address: String
     @State private var principal: Double
     @State private var downKind: Mortgage.DownKind
     @State private var downValue: Double
     @State private var annualRate: Double
     @State private var termYears: Int
     @State private var startDate: Date
+    @StateObject private var completer = AddressCompleter()
+    @FocusState private var addressFocused: Bool
 
     private let original: Mortgage
 
@@ -23,6 +26,7 @@ struct MortgageEditorView: View {
         self.onSaved = onSaved
         self.original = draft
         _name = State(initialValue: draft.name)
+        _address = State(initialValue: draft.address ?? "")
         _principal = State(initialValue: draft.principal)
         _downKind = State(initialValue: draft.down)
         _downValue = State(initialValue: draft.downValue)
@@ -35,6 +39,7 @@ struct MortgageEditorView: View {
     private var preview: Mortgage {
         var m = original
         m.name = name; m.principal = principal
+        m.address = address.trimmingCharacters(in: .whitespaces).isEmpty ? nil : address
         m.downKind = downKind.rawValue; m.downValue = downValue
         m.annualRate = annualRate; m.termMonths = termYears * 12
         m.startDate = Int(startDate.timeIntervalSince1970)
@@ -55,7 +60,32 @@ struct MortgageEditorView: View {
 
             Form {
                 Section {
-                    TextField("Name", text: $name, prompt: Text("123 Main St"))
+                    TextField("Name", text: $name, prompt: Text("Maple Street House"))
+                    LabeledContent("Address") {
+                        TextField("123 Main St, City, ST", text: $address)
+                            .multilineTextAlignment(.trailing)
+                            .focused($addressFocused)
+                            .onChange(of: address) { _, new in completer.update(new) }
+                    }
+                    if addressFocused && !completer.suggestions.isEmpty {
+                        ForEach(completer.suggestions.prefix(4)) { s in
+                            Button {
+                                address = s.full
+                                completer.accept()
+                                addressFocused = false
+                            } label: {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(s.title)
+                                    if !s.subtitle.isEmpty {
+                                        Text(s.subtitle).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                     LabeledContent("Mortgage amount") {
                         TextField("Loan amount", value: $principal, format: .number)
                             .multilineTextAlignment(.trailing)

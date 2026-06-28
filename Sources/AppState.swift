@@ -198,8 +198,31 @@ final class AppState: ObservableObject {
     func rateChanges(for id: String) -> [MortgageRateChange] {
         rateChanges.filter { $0.mortgageId == id }
     }
+    /// A valuation being dragged on the chart. Merged into `valuations(for:)`
+    /// so the whole detail view updates live without writing to disk each frame.
+    @Published var liveValuation: HomeValuation?
+
     func valuations(for id: String) -> [HomeValuation] {
-        valuations.filter { $0.mortgageId == id }
+        var vs = valuations.filter { $0.mortgageId == id }
+        if let live = liveValuation, live.mortgageId == id {
+            if let i = vs.firstIndex(where: { $0.id == live.id }) { vs[i] = live }
+            else { vs.append(live) }
+        }
+        return vs.sorted { $0.date < $1.date }
+    }
+
+    func setLiveValuation(_ v: HomeValuation?) { liveValuation = v }
+
+    /// Persist the dragged valuation and clear the live override.
+    func commitValuation(_ v: HomeValuation) {
+        liveValuation = nil
+        try? database?.saveValuation(v)
+        loadFromDatabase()
+    }
+
+    func updateValuation(_ v: HomeValuation) {
+        try? database?.saveValuation(v)
+        loadFromDatabase()
     }
     func manualTxns(for id: String) -> [MortgageManualTxn] {
         manualTxns.filter { $0.mortgageId == id }
@@ -241,9 +264,9 @@ final class AppState: ObservableObject {
             id: newId(), mortgageId: mortgageId, effectiveDate: epoch(date), annualRate: annualRate))
         loadFromDatabase()
     }
-    func addValuation(mortgageId: String, date: Date, value: Double) {
+    func addValuation(mortgageId: String, date: Date, value: Double, source: String? = nil) {
         try? database?.saveValuation(HomeValuation(
-            id: newId(), mortgageId: mortgageId, date: epoch(date), value: value))
+            id: newId(), mortgageId: mortgageId, date: epoch(date), value: value, source: source))
         loadFromDatabase()
     }
     func addManualTxn(mortgageId: String, date: Date, amount: Double, note: String?) {
@@ -277,6 +300,46 @@ final class AppState: ObservableObject {
     func detectPayment(for m: Mortgage) -> MortgageDetection.Suggestion? {
         let expected = summary(for: m).monthlyPayment
         return MortgageDetection.detect(in: transactions, expectedPayment: expected)
+    }
+
+    // MARK: - Zillow
+
+    @Published private(set) var zillowFetching: Set<String> = []
+    @Published var zillowError: String?
+
+    func isFetchingZillow(_ id: String) -> Bool { zillowFetching.contains(id) }
+
+    /// Manual trigger: look up the current Zestimate for the mortgage's address
+    /// and add it as a "zillow"-sourced valuation dated today.
+    func fetchZillowValuation(for m: Mortgage) async {
+        guard let address = m.address?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !address.isEmpty else {
+            zillowError = ZillowError.noAddress.localizedDescription
+            return
+        }
+        zillowError = nil
+        zillowFetching.insert(m.id)
+        defer { zillowFetching.remove(m.id) }
+        do {
+            let value = try await ZillowScraper().fetchZestimate(address: address)
+            upsertZillowValuation(mortgageId: m.id, value: value)
+        } catch {
+            zillowError = error.localizedDescription
+        }
+    }
+
+    /// Store today's Zillow value, replacing an earlier Zillow reading from the
+    /// same day rather than stacking duplicate points.
+    private func upsertZillowValuation(mortgageId: String, value: Double) {
+        let today = Date()
+        let existing = valuations.first {
+            $0.mortgageId == mortgageId && $0.source == "zillow"
+                && Calendar.current.isDate($0.asDate, inSameDayAs: today)
+        }
+        let id = existing?.id ?? newId()
+        try? database?.saveValuation(HomeValuation(
+            id: id, mortgageId: mortgageId, date: epoch(today), value: value, source: "zillow"))
+        loadFromDatabase()
     }
 
     private func relinkPayments(for m: Mortgage) {

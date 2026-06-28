@@ -54,7 +54,9 @@ Mortgages are stored in their own tables (migration v2) that **sync never touche
 - **Rate changes over time** (ARM resets / refinances): the engine re-amortizes the remaining balance over the remaining term from each effective date.
 - **Home value over time**: valuations are carried forward (step function) so equity is computed correctly at any date.
 - **Extra principal payments**: manual transactions that shorten the loan, stored separately from synced data.
-- **Linking real payments**: mark a synced expense as the mortgage payment and Phinny auto-links matching historical transactions (or detects the recurring payment for you).
+- **Linking real payments + escrow**: mark a synced expense as the mortgage payment and Phinny auto-links matching historical transactions (or detects the recurring payment for you). The amortization always uses the computed principal & interest as the source of truth, so a payment that bundles escrow never corrupts your balance; instead Phinny back-calculates escrow (taxes & insurance) as the difference between the real payment and the scheduled P&I.
+- **Interactive home-value chart**: double-click to add a valuation where you click, drag points to adjust (everything recomputes live), or click a point to edit its exact value/date.
+- **Zillow lookups**: add a property address (native MapKit autocomplete) and hit "Update from Zillow" to pull the current Zestimate as a `zillow`-sourced valuation. The lookup runs in an offscreen WebKit view so it works where a plain HTTP request gets bot-blocked. Manual trigger only.
 
 `MortgageEngine` is pure (no I/O), so all the math is easy to read and reason about.
 

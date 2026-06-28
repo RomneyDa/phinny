@@ -22,9 +22,11 @@ Sources/
   Analytics.swift           Pure functions: transactions -> chart series
   DemoData.swift            Synthesizes the bundled demo database
   Mortgage/                 MortgageModels, MortgageEngine (pure amortization),
-                            MortgageDetection (link/detect payments)
+                            MortgageDetection (link/detect payments),
+                            ZillowScraper (offscreen WKWebView Zestimate lookup)
   Views/                    SwiftUI: RootView, MainView (sidebar), Dashboard, Charts,
-                            OnboardingView (connect sheet), Mortgage/ (detail + editor)
+                            OnboardingView (connect sheet),
+                            Mortgage/ (detail, editor, InteractiveHomeValueChart, AddressField)
 Resources/                  Entitlements, Assets.xcassets (procedural app icon),
                             phinny-demo.sqlite (bundled demo data), generated Info.plist
 scripts/                    run.sh, build-app.sh, build-signed-local.sh,
@@ -68,6 +70,7 @@ The `.xcodeproj` and `Resources/Info.plist` are **generated** (git-ignored). Nev
 - Money follows the SimpleFIN sign convention: negative = spending, positive = income.
 - Dates from SimpleFIN are epoch seconds.
 - New settings → add to `Config.Sync` (YAML). New secrets → `Keychain.swift`. New stored data → a GRDB migration in `Database.swift` (append a new `registerMigration`, never edit an existing one).
+- Mortgage math source of truth: balance/equity/payoff always come from `MortgageEngine` (loan terms), never from linked payment amounts. Linked payments are display-only and feed the escrow back-calculation (actual payment − scheduled P&I). Don't let a real payment amount drive the amortization.
 
 ## Common tasks
 

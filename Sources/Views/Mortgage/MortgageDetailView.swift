@@ -17,13 +17,51 @@ struct MortgageDetailView: View {
     private var schedule: [MortgageEngine.Point] { state.schedule(for: mortgage) }
     private var linked: [Transaction] { state.linkedTransactions(for: mortgage.id) }
 
+    /// Back-calculated escrow: the typical real payment minus the scheduled P&I.
+    /// Amortization always uses the computed P&I as the source of truth; the
+    /// actual payment only tells us how much extra goes to escrow (taxes/insurance).
+    private var paymentBreakdown: (typical: Double, principalInterest: Double, escrow: Double)? {
+        let pi = summary.monthlyPayment
+        let amounts = linked.map { abs($0.amount) }.sorted()
+        let typical: Double
+        if !amounts.isEmpty { typical = amounts[amounts.count / 2] }
+        else if let pa = mortgage.paymentAmount { typical = abs(pa) }
+        else { return nil }
+        return (typical, pi, typical - pi)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 cards
-                CardSection("Home Value vs. Loan Balance", subtitle: "Projected, with your value adjustments applied") {
-                    BalanceEquityChart(points: schedule)
+                CardSection("Home Value", subtitle: "Double-click to add a point, drag to adjust, click to edit") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            if let err = state.zillowError {
+                                Label(err, systemImage: "exclamationmark.triangle")
+                                    .font(.caption).foregroundStyle(Theme.expense)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            if state.isFetchingZillow(mortgage.id) {
+                                ProgressView().controlSize(.small)
+                            }
+                            Button {
+                                Task { await state.fetchZillowValuation(for: mortgage) }
+                            } label: {
+                                Label("Update from Zillow", systemImage: "house.and.flag")
+                            }
+                            .disabled(state.isFetchingZillow(mortgage.id) || (mortgage.address?.isEmpty ?? true))
+                            .help(mortgage.address?.isEmpty ?? true
+                                  ? "Add a property address (Edit) to enable Zillow lookups"
+                                  : "Fetch the current Zestimate for \(mortgage.address ?? "")")
+                        }
+                        InteractiveHomeValueChart(mortgage: mortgage)
+                    }
+                }
+                CardSection("Loan Balance", subtitle: "Projected amortization") {
+                    BalanceChart(points: schedule)
                 }
                 CardSection("Equity Over Time", subtitle: "Home value minus what you owe") {
                     EquityChart(points: schedule)
@@ -112,7 +150,7 @@ struct MortgageDetailView: View {
                     add: { sheet = .valuation },
                     rows: [("\(Format.currency(mortgage.purchasePrice)) at \(short(mortgage.start)) (purchase)", nil)]
                         + state.valuations(for: mortgage.id).map {
-                            ("\(Format.currency($0.value)) at \(short($0.asDate))",
+                            ("\(Format.currency($0.value)) at \(short($0.asDate))\($0.isAutomated ? " · Zillow" : "")",
                              DeleteRef(table: HomeValuation.databaseTableName, id: $0.id))
                         }
                 )
@@ -176,6 +214,11 @@ struct MortgageDetailView: View {
                         }
                         Spacer()
                     }
+                    if let b = paymentBreakdown, b.typical > 0 {
+                        EscrowBreakdown(typical: b.typical, principalInterest: b.principalInterest, escrow: b.escrow)
+                        Text("Your balance and payoff use the scheduled principal & interest, so escrow changes never throw off the math.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 } else {
                     Text("No payment linked yet. Right-click a transaction on the Dashboard and choose \"Mark as mortgage payment\", or detect it automatically.")
                         .font(.callout).foregroundStyle(.secondary)
@@ -200,9 +243,54 @@ struct MortgageDetailView: View {
     }
 }
 
+// MARK: - Escrow breakdown
+
+/// Splits the typical real payment into scheduled P&I vs. back-calculated escrow.
+private struct EscrowBreakdown: View {
+    let typical: Double
+    let principalInterest: Double
+    let escrow: Double
+
+    var body: some View {
+        let hasEscrow = escrow > 1
+        let piFraction = typical > 0 ? min(1, max(0, principalInterest / typical)) : 1
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Typical payment").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Format.currency(typical))/mo").font(.caption).fontWeight(.semibold)
+            }
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    Rectangle().fill(Theme.accent).frame(width: max(2, geo.size.width * piFraction))
+                    if hasEscrow { Rectangle().fill(Color.orange) }
+                }
+            }
+            .frame(height: 10)
+            .clipShape(Capsule())
+            HStack(spacing: 16) {
+                legend(Theme.accent, "Principal & interest", principalInterest)
+                if hasEscrow {
+                    legend(.orange, "Escrow (taxes & insurance)", escrow)
+                } else {
+                    Text("Covers principal & interest").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func legend(_ color: Color, _ label: String, _ value: Double) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text("\(label) · \(Format.currency(value))").font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}
+
 // MARK: - Charts
 
-private struct BalanceEquityChart: View {
+private struct BalanceChart: View {
     let points: [MortgageEngine.Point]
     var body: some View {
         Chart {
@@ -212,8 +300,8 @@ private struct BalanceEquityChart: View {
                                                     startPoint: .top, endPoint: .bottom))
             }
             ForEach(points) { p in
-                LineMark(x: .value("Date", p.date), y: .value("Home value", p.homeValue))
-                    .foregroundStyle(Theme.accent)
+                LineMark(x: .value("Date", p.date), y: .value("Balance", p.balance))
+                    .foregroundStyle(Theme.expense)
                     .lineStyle(StrokeStyle(lineWidth: 2))
             }
             RuleMark(x: .value("Today", Date()))

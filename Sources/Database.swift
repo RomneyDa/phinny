@@ -103,6 +103,15 @@ final class AppDatabase {
                     .indexed().references("mortgage", onDelete: .cascade)
             }
         }
+        // v3: property address (for Zillow lookups) + valuation source.
+        migrator.registerMigration("v3") { db in
+            try db.alter(table: "mortgage") { t in
+                t.add(column: "address", .text)
+            }
+            try db.alter(table: "home_valuation") { t in
+                t.add(column: "source", .text)
+            }
+        }
         return migrator
     }
 

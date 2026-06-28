@@ -53,7 +53,7 @@ enum DemoData {
             add(checkingId, day: 15, monthOffset: m, amount: 2600, desc: "Payroll - Acme Corp", payee: "Acme Corp", category: "Income")
 
             // Mortgage payment (linked to the demo mortgage below).
-            add(checkingId, day: 1, monthOffset: m, amount: -2586.07, desc: "Mortgage payment", payee: "Sunset Mortgage Co", category: "Housing")
+            add(checkingId, day: 1, monthOffset: m, amount: -3150, desc: "Mortgage payment", payee: "Sunset Mortgage Co", category: "Housing")
 
             // Fixed monthly bills.
             add(checkingId, day: 2, monthOffset: m, amount: -480, desc: "HOA dues", payee: "Maple Grove HOA", category: "Rent")
@@ -125,10 +125,11 @@ enum DemoData {
         }
 
         let m = Mortgage(
-            id: "demo-mortgage", name: "Maple Street House", principal: 420000,
+            id: "demo-mortgage", name: "Maple Street House",
+            address: "742 Maple St, Portland, OR 97205", principal: 420000,
             downKind: "percent", downValue: 20, annualRate: 6.75, termMonths: 360,
             startDate: ago(months: 36),
-            paymentPayee: "Sunset Mortgage Co", paymentAmount: -2586.07,
+            paymentPayee: "Sunset Mortgage Co", paymentAmount: -3150,
             createdAt: Int(now.timeIntervalSince1970)
         )
         try db.saveMortgage(m)
@@ -138,6 +139,8 @@ enum DemoData {
             id: "demo-v1", mortgageId: m.id, date: ago(months: 14), value: 565000))
         try db.saveValuation(HomeValuation(
             id: "demo-v2", mortgageId: m.id, date: ago(months: 2), value: 592000))
+        try db.saveValuation(HomeValuation(
+            id: "demo-v3", mortgageId: m.id, date: ago(months: 1), value: 598000, source: "zillow"))
         try db.saveManualTxn(MortgageManualTxn(
             id: "demo-mt1", mortgageId: m.id, date: ago(months: 6), amount: 10000,
             note: "Bonus toward principal"))

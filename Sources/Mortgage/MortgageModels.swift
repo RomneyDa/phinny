@@ -7,6 +7,8 @@ import GRDB
 struct Mortgage: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
     var id: String
     var name: String
+    /// Optional property address (used for Zillow lookups).
+    var address: String? = nil
     /// The loan amount borrowed (the "mortgage amount").
     var principal: Double
     /// "percent" or "amount" - how `downValue` is interpreted.
@@ -74,9 +76,13 @@ struct HomeValuation: Codable, Identifiable, Hashable, FetchableRecord, Persista
     var mortgageId: String
     var date: Int
     var value: Double
+    /// Where this value came from: nil/"manual" for hand-entered, "zillow" for
+    /// an automated Zillow lookup.
+    var source: String? = nil
 
     static let databaseTableName = "home_valuation"
     var asDate: Date { Date(timeIntervalSince1970: TimeInterval(date)) }
+    var isAutomated: Bool { source != nil && source != "manual" }
 }
 
 /// A manual transaction attached to a mortgage - typically an extra payment
