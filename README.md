@@ -11,6 +11,7 @@
 - **Connect once** with a SimpleFIN setup token (or try the built-in demo).
 - **Syncs automatically** on launch - but only when the data is stale, to respect SimpleFIN's ~24 requests/day budget.
 - **Visualizes** income vs. spending, net cash flow, top spending, and recent transactions with native [Swift Charts](https://developer.apple.com/documentation/charts).
+- **Tracks mortgages** without logging every payment: enter the loan, rate, and down payment and Phinny computes the whole amortization, equity, and payoff. Adjust the rate and home value over time, add extra principal payments, and link a real expense as the recurring payment (with historical auto-detection).
 - **Stores everything locally** - SQLite database in `~/.phinny`, credentials in the macOS Keychain. Nothing leaves your machine except the SimpleFIN request itself.
 
 <div align="center"><img src="docs/screenshot.png" width="760" alt="Phinny dashboard" /></div>
@@ -45,6 +46,17 @@ Phinny has two modes:
 - **Connected**: once a SimpleFIN access URL is in the Keychain, the app reads/writes the real `~/.phinny/phinny.sqlite` and syncs.
 
 The bundled demo database is generated from `Sources/DemoData.swift` via the real DB code, so it always matches the schema. Regenerate it with `./scripts/generate-demo-db.sh` (commit the resulting `Resources/phinny-demo.sqlite`).
+
+### Mortgages
+
+Mortgages are stored in their own tables (migration v2) that **sync never touches**, so manual entries survive. You enter only the facts (loan amount, down payment, interest rate, term, start date) and `MortgageEngine` computes the month-by-month amortization. It supports:
+
+- **Rate changes over time** (ARM resets / refinances): the engine re-amortizes the remaining balance over the remaining term from each effective date.
+- **Home value over time**: valuations are carried forward (step function) so equity is computed correctly at any date.
+- **Extra principal payments**: manual transactions that shorten the loan, stored separately from synced data.
+- **Linking real payments**: mark a synced expense as the mortgage payment and Phinny auto-links matching historical transactions (or detects the recurring payment for you).
+
+`MortgageEngine` is pure (no I/O), so all the math is easy to read and reason about.
 
 ### Where data lives
 

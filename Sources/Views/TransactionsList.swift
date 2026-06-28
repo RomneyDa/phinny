@@ -2,6 +2,7 @@ import SwiftUI
 
 /// A compact recent-transactions table.
 struct TransactionsList: View {
+    @EnvironmentObject private var state: AppState
     let transactions: [Transaction]
     let accountsById: [String: String]
     let currency: String
@@ -43,6 +44,19 @@ struct TransactionsList: View {
                         .foregroundStyle(txn.isIncome ? Theme.income : .primary)
                 }
                 .padding(.vertical, 9)
+                .contextMenu {
+                    if state.mortgages.isEmpty {
+                        Text("Add a mortgage to link payments")
+                    } else {
+                        Menu("Mark as mortgage payment") {
+                            ForEach(state.mortgages) { m in
+                                Button(m.name.isEmpty ? "Mortgage" : m.name) {
+                                    state.markAsPayment(txn, mortgageId: m.id)
+                                }
+                            }
+                        }
+                    }
+                }
 
                 if txn.id != transactions.prefix(limit).last?.id {
                     Divider()

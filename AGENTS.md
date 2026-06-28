@@ -21,7 +21,10 @@ Sources/
   Models.swift              Account, Transaction (GRDB records)
   Analytics.swift           Pure functions: transactions -> chart series
   DemoData.swift            Synthesizes the bundled demo database
-  Views/                    SwiftUI: RootView, OnboardingView (connect sheet), Dashboard, Charts, etc.
+  Mortgage/                 MortgageModels, MortgageEngine (pure amortization),
+                            MortgageDetection (link/detect payments)
+  Views/                    SwiftUI: RootView, MainView (sidebar), Dashboard, Charts,
+                            OnboardingView (connect sheet), Mortgage/ (detail + editor)
 Resources/                  Entitlements, Assets.xcassets (procedural app icon),
                             phinny-demo.sqlite (bundled demo data), generated Info.plist
 scripts/                    run.sh, build-app.sh, build-signed-local.sh,

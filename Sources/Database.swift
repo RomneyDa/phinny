@@ -59,6 +59,50 @@ final class AppDatabase {
                 t.column("value", .text).notNull()
             }
         }
+        // v2: mortgages and their adjustments. These tables are never touched by
+        // a sync, so manual entries (e.g. extra principal payments) survive.
+        migrator.registerMigration("v2") { db in
+            try db.create(table: "mortgage") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("principal", .double).notNull()
+                t.column("downKind", .text).notNull()
+                t.column("downValue", .double).notNull()
+                t.column("annualRate", .double).notNull()
+                t.column("termMonths", .integer).notNull()
+                t.column("startDate", .integer).notNull()
+                t.column("paymentPayee", .text)
+                t.column("paymentAmount", .double)
+                t.column("createdAt", .integer).notNull()
+            }
+            try db.create(table: "mortgage_rate_change") { t in
+                t.primaryKey("id", .text)
+                t.column("mortgageId", .text).notNull()
+                    .indexed().references("mortgage", onDelete: .cascade)
+                t.column("effectiveDate", .integer).notNull()
+                t.column("annualRate", .double).notNull()
+            }
+            try db.create(table: "home_valuation") { t in
+                t.primaryKey("id", .text)
+                t.column("mortgageId", .text).notNull()
+                    .indexed().references("mortgage", onDelete: .cascade)
+                t.column("date", .integer).notNull()
+                t.column("value", .double).notNull()
+            }
+            try db.create(table: "mortgage_manual_txn") { t in
+                t.primaryKey("id", .text)
+                t.column("mortgageId", .text).notNull()
+                    .indexed().references("mortgage", onDelete: .cascade)
+                t.column("date", .integer).notNull()
+                t.column("amount", .double).notNull()
+                t.column("note", .text)
+            }
+            try db.create(table: "mortgage_payment_link") { t in
+                t.primaryKey("transactionId", .text)
+                t.column("mortgageId", .text).notNull()
+                    .indexed().references("mortgage", onDelete: .cascade)
+            }
+        }
         return migrator
     }
 
@@ -105,6 +149,59 @@ final class AppDatabase {
 
     func transactionCount() throws -> Int {
         try dbQueue.read { db in try Transaction.fetchCount(db) }
+    }
+
+    // MARK: - Mortgages
+
+    func mortgages() throws -> [Mortgage] {
+        try dbQueue.read { db in try Mortgage.order(Column("createdAt")).fetchAll(db) }
+    }
+    func saveMortgage(_ m: Mortgage) throws {
+        try dbQueue.write { db in try m.save(db) }
+    }
+    func deleteMortgage(id: String) throws {
+        _ = try dbQueue.write { db in try Mortgage.deleteOne(db, key: id) }
+    }
+
+    func rateChanges() throws -> [MortgageRateChange] {
+        try dbQueue.read { db in try MortgageRateChange.order(Column("effectiveDate")).fetchAll(db) }
+    }
+    func saveRateChange(_ r: MortgageRateChange) throws {
+        try dbQueue.write { db in try r.save(db) }
+    }
+
+    func valuations() throws -> [HomeValuation] {
+        try dbQueue.read { db in try HomeValuation.order(Column("date")).fetchAll(db) }
+    }
+    func saveValuation(_ v: HomeValuation) throws {
+        try dbQueue.write { db in try v.save(db) }
+    }
+
+    func manualTxns() throws -> [MortgageManualTxn] {
+        try dbQueue.read { db in try MortgageManualTxn.order(Column("date")).fetchAll(db) }
+    }
+    func saveManualTxn(_ t: MortgageManualTxn) throws {
+        try dbQueue.write { db in try t.save(db) }
+    }
+
+    /// Delete any row from a mortgage child table by id (rate change, valuation,
+    /// manual txn). `table` is the GRDB table name.
+    func deleteMortgageChild(table: String, id: String) throws {
+        _ = try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM \(table) WHERE id = ?", arguments: [id])
+        }
+    }
+
+    func paymentLinks() throws -> [MortgagePaymentLink] {
+        try dbQueue.read { db in try MortgagePaymentLink.fetchAll(db) }
+    }
+    func addPaymentLinks(_ links: [MortgagePaymentLink]) throws {
+        try dbQueue.write { db in for l in links { try l.save(db) } }
+    }
+    func removePaymentLinks(mortgageId: String) throws {
+        _ = try dbQueue.write { db in
+            try MortgagePaymentLink.filter(Column("mortgageId") == mortgageId).deleteAll(db)
+        }
     }
 
     // MARK: - Meta helpers

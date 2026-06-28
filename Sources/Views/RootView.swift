@@ -1,20 +1,19 @@
 import SwiftUI
 
-/// Top-level router. The dashboard is shown in both demo and connected modes;
-/// connecting a real account happens in a sheet.
+/// Top-level router. Shows the main split view (Dashboard + Mortgages) once
+/// loaded; connecting a real account happens in a sheet.
 struct RootView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
         Group {
-            switch state.phase {
-            case .loading:
+            if state.phase == .loading {
                 ProgressView("Loading…").controlSize(.large)
-            case .demo, .ready:
-                DashboardView()
+            } else {
+                MainView()
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: state.phase)
+        .animation(.easeInOut(duration: 0.2), value: state.phase)
         .sheet(isPresented: $state.showingConnectSheet) {
             OnboardingView()
         }

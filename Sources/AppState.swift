@@ -26,6 +26,11 @@ final class AppState: ObservableObject {
     @Published private(set) var phase: Phase = .loading
     @Published private(set) var accounts: [Account] = []
     @Published private(set) var transactions: [Transaction] = []
+    @Published private(set) var mortgages: [Mortgage] = []
+    @Published private(set) var rateChanges: [MortgageRateChange] = []
+    @Published private(set) var valuations: [HomeValuation] = []
+    @Published private(set) var manualTxns: [MortgageManualTxn] = []
+    @Published private(set) var paymentLinks: [MortgagePaymentLink] = []
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSync: Date?
     @Published var errorMessage: String?
@@ -45,6 +50,15 @@ final class AppState: ObservableObject {
         if !FileManager.default.fileExists(atPath: Paths.configFile.path) {
             try? ConfigStore.save(config)
         }
+
+        // Dev convenience: force demo mode regardless of any connected account
+        // (for testing/screenshots). Does not touch the real database or Keychain.
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["PHINNY_FORCE_DEMO"] == "1" {
+            enterDemoMode()
+            return
+        }
+        #endif
 
         // Dev convenience: auto-connect from a SIMPLEFIN_TOKEN in .env (Debug only).
         // Run via ./scripts/run.sh so the variable reaches the app.
@@ -172,6 +186,111 @@ final class AppState: ObservableObject {
         guard let database else { return }
         accounts = (try? database.accounts()) ?? []
         transactions = (try? database.transactions()) ?? []
+        mortgages = (try? database.mortgages()) ?? []
+        rateChanges = (try? database.rateChanges()) ?? []
+        valuations = (try? database.valuations()) ?? []
+        manualTxns = (try? database.manualTxns()) ?? []
+        paymentLinks = (try? database.paymentLinks()) ?? []
+    }
+
+    // MARK: - Mortgages
+
+    func rateChanges(for id: String) -> [MortgageRateChange] {
+        rateChanges.filter { $0.mortgageId == id }
+    }
+    func valuations(for id: String) -> [HomeValuation] {
+        valuations.filter { $0.mortgageId == id }
+    }
+    func manualTxns(for id: String) -> [MortgageManualTxn] {
+        manualTxns.filter { $0.mortgageId == id }
+    }
+    func linkedTransactionIds(for id: String) -> Set<String> {
+        Set(paymentLinks.filter { $0.mortgageId == id }.map { $0.transactionId })
+    }
+    func linkedTransactions(for id: String) -> [Transaction] {
+        let ids = linkedTransactionIds(for: id)
+        return transactions.filter { ids.contains($0.id) }
+    }
+
+    func summary(for m: Mortgage, asOf now: Date = Date()) -> MortgageEngine.Summary {
+        MortgageEngine.summary(for: m, rateChanges: rateChanges(for: m.id),
+                               extraPayments: manualTxns(for: m.id),
+                               valuations: valuations(for: m.id), asOf: now)
+    }
+    func schedule(for m: Mortgage) -> [MortgageEngine.Point] {
+        MortgageEngine.schedule(for: m, rateChanges: rateChanges(for: m.id),
+                                extraPayments: manualTxns(for: m.id),
+                                valuations: valuations(for: m.id))
+    }
+
+    private func epoch(_ d: Date) -> Int { Int(d.timeIntervalSince1970) }
+    private func newId() -> String { UUID().uuidString }
+
+    @discardableResult
+    func upsertMortgage(_ m: Mortgage) -> Mortgage {
+        try? database?.saveMortgage(m)
+        loadFromDatabase()
+        return m
+    }
+    func deleteMortgage(_ id: String) {
+        try? database?.deleteMortgage(id: id)
+        loadFromDatabase()
+    }
+    func addRateChange(mortgageId: String, date: Date, annualRate: Double) {
+        try? database?.saveRateChange(MortgageRateChange(
+            id: newId(), mortgageId: mortgageId, effectiveDate: epoch(date), annualRate: annualRate))
+        loadFromDatabase()
+    }
+    func addValuation(mortgageId: String, date: Date, value: Double) {
+        try? database?.saveValuation(HomeValuation(
+            id: newId(), mortgageId: mortgageId, date: epoch(date), value: value))
+        loadFromDatabase()
+    }
+    func addManualTxn(mortgageId: String, date: Date, amount: Double, note: String?) {
+        try? database?.saveManualTxn(MortgageManualTxn(
+            id: newId(), mortgageId: mortgageId, date: epoch(date), amount: amount, note: note))
+        loadFromDatabase()
+    }
+    func deleteMortgageChild(table: String, id: String) {
+        try? database?.deleteMortgageChild(table: table, id: id)
+        loadFromDatabase()
+    }
+
+    /// Mark a synced transaction as this mortgage's payment, then auto-link all
+    /// matching historical transactions.
+    func markAsPayment(_ txn: Transaction, mortgageId: String) {
+        guard var m = mortgages.first(where: { $0.id == mortgageId }) else { return }
+        m.paymentPayee = txn.payee ?? txn.descriptionText
+        m.paymentAmount = txn.amount
+        try? database?.saveMortgage(m)
+        relinkPayments(for: m)
+    }
+
+    func applyDetectedPayment(_ suggestion: MortgageDetection.Suggestion, mortgageId: String) {
+        guard var m = mortgages.first(where: { $0.id == mortgageId }) else { return }
+        m.paymentPayee = suggestion.payee
+        m.paymentAmount = suggestion.amount
+        try? database?.saveMortgage(m)
+        relinkPayments(for: m)
+    }
+
+    func detectPayment(for m: Mortgage) -> MortgageDetection.Suggestion? {
+        let expected = summary(for: m).monthlyPayment
+        return MortgageDetection.detect(in: transactions, expectedPayment: expected)
+    }
+
+    private func relinkPayments(for m: Mortgage) {
+        try? database?.removePaymentLinks(mortgageId: m.id)
+        let matched = MortgageDetection.matches(transactions, for: m)
+        let links = matched.map { MortgagePaymentLink(transactionId: $0.id, mortgageId: m.id) }
+        try? database?.addPaymentLinks(links)
+        loadFromDatabase()
+    }
+
+    func makeDraftMortgage() -> Mortgage {
+        Mortgage(id: newId(), name: "", principal: 400000, downKind: "percent", downValue: 20,
+                 annualRate: 6.5, termMonths: 360, startDate: epoch(Date()),
+                 paymentPayee: nil, paymentAmount: nil, createdAt: epoch(Date()))
     }
 
     // MARK: - Derived data for the dashboard
