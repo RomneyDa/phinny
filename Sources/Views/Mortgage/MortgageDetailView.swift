@@ -13,6 +13,9 @@ struct MortgageDetailView: View {
     @State private var detected: MortgageDetection.Suggestion?
     @State private var showDetectResult = false
 
+    private var hasZillowLink: Bool {
+        !((mortgage.zillowUrl ?? mortgage.address ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+    }
     private var summary: MortgageEngine.Summary { state.summary(for: mortgage) }
     private var schedule: [MortgageEngine.Point] { state.schedule(for: mortgage) }
     private var linked: [Transaction] { state.linkedTransactions(for: mortgage.id) }
@@ -52,10 +55,10 @@ struct MortgageDetailView: View {
                             } label: {
                                 Label("Update from Zillow", systemImage: "house.and.flag")
                             }
-                            .disabled(state.isFetchingZillow(mortgage.id) || (mortgage.address?.isEmpty ?? true))
-                            .help(mortgage.address?.isEmpty ?? true
-                                  ? "Add a property address (Edit) to enable Zillow lookups"
-                                  : "Fetch the current Zestimate for \(mortgage.address ?? "")")
+                            .disabled(state.isFetchingZillow(mortgage.id) || !hasZillowLink)
+                            .help(hasZillowLink
+                                  ? "Fetch the current Zestimate from the linked Zillow page"
+                                  : "Paste a Zillow property link (Edit) to enable lookups")
                         }
                         InteractiveHomeValueChart(mortgage: mortgage)
                     }

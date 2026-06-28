@@ -7,8 +7,12 @@ import GRDB
 struct Mortgage: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
     var id: String
     var name: String
-    /// Optional property address (used for Zillow lookups).
+    /// Optional property address (native autocomplete; display + reference).
     var address: String? = nil
+    /// Optional Zillow property URL (the homedetails/.../<zpid>_zpid/ link).
+    /// When set, "Update from Zillow" scrapes this exact page - far more
+    /// reliable than resolving an address.
+    var zillowUrl: String? = nil
     /// The loan amount borrowed (the "mortgage amount").
     var principal: Double
     /// "percent" or "amount" - how `downValue` is interpreted.

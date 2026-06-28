@@ -23,7 +23,8 @@ Sources/
   DemoData.swift            Synthesizes the bundled demo database
   Mortgage/                 MortgageModels, MortgageEngine (pure amortization),
                             MortgageDetection (link/detect payments),
-                            ZillowScraper (offscreen WKWebView Zestimate lookup)
+                            ZillowScraper (offscreen WKWebView Zestimate lookup;
+                            prefers a pasted homedetails URL over address search)
   Views/                    SwiftUI: RootView, MainView (sidebar), Dashboard, Charts,
                             OnboardingView (connect sheet),
                             Mortgage/ (detail, editor, InteractiveHomeValueChart, AddressField)

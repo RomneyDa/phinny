@@ -112,6 +112,12 @@ final class AppDatabase {
                 t.add(column: "source", .text)
             }
         }
+        // v4: a direct Zillow property URL for reliable Zestimate scraping.
+        migrator.registerMigration("v4") { db in
+            try db.alter(table: "mortgage") { t in
+                t.add(column: "zillowUrl", .text)
+            }
+        }
         return migrator
     }
 

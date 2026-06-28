@@ -53,7 +53,7 @@ enum DemoData {
             add(checkingId, day: 15, monthOffset: m, amount: 2600, desc: "Payroll - Acme Corp", payee: "Acme Corp", category: "Income")
 
             // Mortgage payment (linked to the demo mortgage below).
-            add(checkingId, day: 1, monthOffset: m, amount: -3150, desc: "Mortgage payment", payee: "Sunset Mortgage Co", category: "Housing")
+            add(checkingId, day: 1, monthOffset: m, amount: -2300, desc: "Mortgage payment", payee: "Sunset Mortgage Co", category: "Housing")
 
             // Fixed monthly bills.
             add(checkingId, day: 2, monthOffset: m, amount: -480, desc: "HOA dues", payee: "Maple Grove HOA", category: "Rent")
@@ -125,22 +125,24 @@ enum DemoData {
         }
 
         let m = Mortgage(
-            id: "demo-mortgage", name: "Maple Street House",
-            address: "742 Maple St, Portland, OR 97205", principal: 420000,
+            id: "demo-mortgage", name: "South Jordan House",
+            address: "1806 W Ikaros Ln, South Jordan, UT 84095",
+            zillowUrl: "https://www.zillow.com/homedetails/1806-W-Ikaros-Ln-South-Jordan-UT-84095/248854700_zpid/",
+            principal: 300000,
             downKind: "percent", downValue: 20, annualRate: 6.75, termMonths: 360,
             startDate: ago(months: 36),
-            paymentPayee: "Sunset Mortgage Co", paymentAmount: -3150,
+            paymentPayee: "Sunset Mortgage Co", paymentAmount: -2300,
             createdAt: Int(now.timeIntervalSince1970)
         )
         try db.saveMortgage(m)
         try db.saveRateChange(MortgageRateChange(
             id: "demo-rc1", mortgageId: m.id, effectiveDate: ago(months: 12), annualRate: 6.25))
         try db.saveValuation(HomeValuation(
-            id: "demo-v1", mortgageId: m.id, date: ago(months: 14), value: 565000))
+            id: "demo-v1", mortgageId: m.id, date: ago(months: 14), value: 352000))
         try db.saveValuation(HomeValuation(
-            id: "demo-v2", mortgageId: m.id, date: ago(months: 2), value: 592000))
+            id: "demo-v2", mortgageId: m.id, date: ago(months: 2), value: 372000))
         try db.saveValuation(HomeValuation(
-            id: "demo-v3", mortgageId: m.id, date: ago(months: 1), value: 598000, source: "zillow"))
+            id: "demo-v3", mortgageId: m.id, date: ago(months: 1), value: 378000, source: "zillow"))
         try db.saveManualTxn(MortgageManualTxn(
             id: "demo-mt1", mortgageId: m.id, date: ago(months: 6), amount: 10000,
             note: "Bonus toward principal"))

@@ -51,6 +51,21 @@ final class AppState: ObservableObject {
             try? ConfigStore.save(config)
         }
 
+        // Dev tool: probe a Zillow address from the CLI and exit.
+        #if DEBUG
+        if let addr = ProcessInfo.processInfo.environment["PHINNY_ZILLOW_TEST"] {
+            let scraper = ZillowScraper()
+            do {
+                let v = try await scraper.fetchZestimate(address: addr)
+                print("ZILLOW_RESULT|\(addr)|\(Int(v))|\(scraper.lastURL)|\(scraper.lastTitle)")
+            } catch {
+                print("ZILLOW_ERROR|\(addr)|\(error.localizedDescription)|\(scraper.lastURL)|\(scraper.lastTitle)")
+            }
+            fflush(stdout)
+            exit(0)
+        }
+        #endif
+
         // Dev convenience: force demo mode regardless of any connected account
         // (for testing/screenshots). Does not touch the real database or Keychain.
         #if DEBUG
@@ -312,16 +327,19 @@ final class AppState: ObservableObject {
     /// Manual trigger: look up the current Zestimate for the mortgage's address
     /// and add it as a "zillow"-sourced valuation dated today.
     func fetchZillowValuation(for m: Mortgage) async {
-        guard let address = m.address?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !address.isEmpty else {
-            zillowError = ZillowError.noAddress.localizedDescription
+        // Prefer the exact Zillow property URL; fall back to the address.
+        let link = m.zillowUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let address = m.address?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let target = !link.isEmpty ? link : address
+        guard !target.isEmpty else {
+            zillowError = "Add a Zillow property link (Edit) to enable lookups."
             return
         }
         zillowError = nil
         zillowFetching.insert(m.id)
         defer { zillowFetching.remove(m.id) }
         do {
-            let value = try await ZillowScraper().fetchZestimate(address: address)
+            let value = try await ZillowScraper().fetchZestimate(address: target)
             upsertZillowValuation(mortgageId: m.id, value: value)
         } catch {
             zillowError = error.localizedDescription

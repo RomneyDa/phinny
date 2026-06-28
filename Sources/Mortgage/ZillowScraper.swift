@@ -34,11 +34,25 @@ final class ZillowScraper: NSObject, WKNavigationDelegate {
     private var webView: WKWebView?
     private var loadContinuation: CheckedContinuation<Void, Error>?
 
-    func fetchZestimate(address: String) async throws -> Double {
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let url = searchURL(for: trimmed) else { throw ZillowError.noAddress }
+    /// `input` is either a full Zillow property URL (preferred, most reliable) or
+    /// a plain address (best-effort search).
+    func fetchZestimate(address input: String) async throws -> Double {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw ZillowError.noAddress }
+        let url: URL
+        if trimmed.lowercased().hasPrefix("http"), let u = URL(string: trimmed) {
+            url = u
+        } else if let u = searchURL(for: trimmed) {
+            url = u
+        } else {
+            throw ZillowError.noAddress
+        }
 
-        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 1200, height: 1400))
+        // Ephemeral data store so each lookup is independent (no cached page,
+        // cookies, or "recently viewed" Zestimate bleeding across addresses).
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 1200, height: 1400), configuration: config)
         wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
         wv.navigationDelegate = self
         // Host offscreen (alpha 0) in a real window so WebKit fully renders.
@@ -54,12 +68,22 @@ final class ZillowScraper: NSObject, WKNavigationDelegate {
             webView = nil
         }
 
+        // Establish a session on the homepage first so the address URL resolves
+        // to the actual property (a cold request gets a generic metro page).
+        if let home = URL(string: "https://www.zillow.com/") {
+            try? await withTimeout(seconds: 25) { try await self.load(URLRequest(url: home)) }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
+
         let request: URLRequest = {
             var r = URLRequest(url: url)
             r.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
             return r
         }()
         try await withTimeout(seconds: 30) { [request] in try await self.load(request) }
+
+        lastURL = ((try? await wv.evaluateJavaScript("document.location.href")) as? String) ?? ""
+        lastTitle = ((try? await wv.evaluateJavaScript("document.title")) as? String) ?? ""
 
         // The Zestimate can render after the initial load; poll a few times.
         for _ in 0..<8 {
@@ -72,9 +96,19 @@ final class ZillowScraper: NSObject, WKNavigationDelegate {
     }
 
     private func searchURL(for address: String) -> URL? {
-        let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? address
+        // Zillow's canonical address slug: commas dropped, spaces -> dashes.
+        // e.g. "742 Maple St, Portland, OR 97205" -> "742-Maple-St-Portland-OR-97205".
+        let slug = address
+            .replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: { $0 == " " || $0 == "\t" })
+            .joined(separator: "-")
+        let encoded = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? slug
         return URL(string: "https://www.zillow.com/homes/\(encoded)_rb/")
     }
+
+    /// Diagnostic: the final URL + page title after the lookup (for dev probing).
+    private(set) var lastURL = ""
+    private(set) var lastTitle = ""
 
     // MARK: - Navigation
 

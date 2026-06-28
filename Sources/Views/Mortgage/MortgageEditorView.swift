@@ -10,6 +10,7 @@ struct MortgageEditorView: View {
 
     @State private var name: String
     @State private var address: String
+    @State private var zillowUrl: String
     @State private var principal: Double
     @State private var downKind: Mortgage.DownKind
     @State private var downValue: Double
@@ -27,6 +28,7 @@ struct MortgageEditorView: View {
         self.original = draft
         _name = State(initialValue: draft.name)
         _address = State(initialValue: draft.address ?? "")
+        _zillowUrl = State(initialValue: draft.zillowUrl ?? "")
         _principal = State(initialValue: draft.principal)
         _downKind = State(initialValue: draft.down)
         _downValue = State(initialValue: draft.downValue)
@@ -40,6 +42,7 @@ struct MortgageEditorView: View {
         var m = original
         m.name = name; m.principal = principal
         m.address = address.trimmingCharacters(in: .whitespaces).isEmpty ? nil : address
+        m.zillowUrl = zillowUrl.trimmingCharacters(in: .whitespaces).isEmpty ? nil : zillowUrl.trimmingCharacters(in: .whitespaces)
         m.downKind = downKind.rawValue; m.downValue = downValue
         m.annualRate = annualRate; m.termMonths = termYears * 12
         m.startDate = Int(startDate.timeIntervalSince1970)
@@ -61,12 +64,9 @@ struct MortgageEditorView: View {
             Form {
                 Section {
                     TextField("Name", text: $name, prompt: Text("Maple Street House"))
-                    LabeledContent("Address") {
-                        TextField("123 Main St, City, ST", text: $address)
-                            .multilineTextAlignment(.trailing)
-                            .focused($addressFocused)
-                            .onChange(of: address) { _, new in completer.update(new) }
-                    }
+                    TextField("Address", text: $address, prompt: Text("123 Main St, City, ST"))
+                        .focused($addressFocused)
+                        .onChange(of: address) { _, new in completer.update(new) }
                     if addressFocused && !completer.suggestions.isEmpty {
                         ForEach(completer.suggestions.prefix(4)) { s in
                             Button {
@@ -86,6 +86,17 @@ struct MortgageEditorView: View {
                             .buttonStyle(.plain)
                         }
                     }
+                    TextField("Zillow link", text: $zillowUrl,
+                              prompt: Text("https://www.zillow.com/homedetails/…"))
+                        .font(.system(.caption, design: .monospaced))
+                        .lineLimit(1)
+                } header: {
+                    Text("Property")
+                } footer: {
+                    Text("Paste the property's Zillow page URL to enable \"Update from Zillow\".")
+                }
+
+                Section("Loan") {
                     LabeledContent("Mortgage amount") {
                         TextField("Loan amount", value: $principal, format: .number)
                             .multilineTextAlignment(.trailing)
@@ -142,6 +153,6 @@ struct MortgageEditorView: View {
             }
             .padding(16)
         }
-        .frame(width: 460, height: 560)
+        .frame(width: 480, height: 640)
     }
 }
