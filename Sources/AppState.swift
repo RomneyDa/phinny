@@ -474,17 +474,21 @@ final class AppState: ObservableObject {
     }
 
     /// Simple manual tagging: make `categoryId` the transaction's category,
-    /// replacing any existing links. Pass nil to clear all categories.
+    /// replacing any existing links. Pass nil to clear all categories. Applies to
+    /// every similar transaction (same account + title) so categorizing a merchant
+    /// once tags all of its transactions.
     func setCategory(_ txn: Transaction, categoryId: String?) {
-        let links: [ExpenseCategory]
-        if let categoryId {
-            links = [ExpenseCategory(id: newId(), transactionId: txn.id, categoryId: categoryId,
-                                     startDate: nil, endDate: nil, isAuto: false,
-                                     createdAt: epoch(Date()))]
-        } else {
-            links = []
+        for t in similarTransactions(to: txn) {
+            let links: [ExpenseCategory]
+            if let categoryId {
+                links = [ExpenseCategory(id: newId(), transactionId: t.id, categoryId: categoryId,
+                                         startDate: nil, endDate: nil, isAuto: false,
+                                         createdAt: epoch(Date()))]
+            } else {
+                links = []
+            }
+            try? database?.replaceExpenseCategories(transactionId: t.id, with: links)
         }
-        try? database?.replaceExpenseCategories(transactionId: txn.id, with: links)
         loadFromDatabase()
     }
 
@@ -526,7 +530,11 @@ final class AppState: ObservableObject {
         loadFromDatabase()
     }
     func clearCategories(transactionId: String) {
-        try? database?.replaceExpenseCategories(transactionId: transactionId, with: [])
+        let targets = transactions.first { $0.id == transactionId }
+            .map { similarTransactions(to: $0).map(\.id) } ?? [transactionId]
+        for id in targets {
+            try? database?.replaceExpenseCategories(transactionId: id, with: [])
+        }
         loadFromDatabase()
     }
 
@@ -536,13 +544,22 @@ final class AppState: ObservableObject {
     /// a category off removes every link to it (windowed or not); use the advanced
     /// sheet for per-window control.
     func toggleCategory(_ txn: Transaction, categoryId: String) {
-        let existing = links(forTransaction: txn.id).filter { $0.categoryId == categoryId }
-        if existing.isEmpty {
-            addManualLink(transactionId: txn.id, categoryId: categoryId)
-        } else {
-            for link in existing { try? database?.deleteExpenseCategory(id: link.id) }
-            loadFromDatabase()
+        // Decide the direction from the clicked transaction, then apply it to the
+        // whole group (same account + title) so a merchant is tagged in one click.
+        let turningOn = !links(forTransaction: txn.id).contains { $0.categoryId == categoryId }
+        for t in similarTransactions(to: txn) {
+            let existing = links(forTransaction: t.id).filter { $0.categoryId == categoryId }
+            if turningOn {
+                if existing.isEmpty {
+                    try? database?.saveExpenseCategory(ExpenseCategory(
+                        id: newId(), transactionId: t.id, categoryId: categoryId,
+                        startDate: nil, endDate: nil, isAuto: false, createdAt: epoch(Date())))
+                }
+            } else {
+                for link in existing { try? database?.deleteExpenseCategory(id: link.id) }
+            }
         }
+        loadFromDatabase()
     }
 
     /// Existing links that conflict with `candidate`: same transaction + same
