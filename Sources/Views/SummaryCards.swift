@@ -5,10 +5,9 @@ struct SummaryCards: View {
     let summary: Analytics.Summary
     let currency: String
 
-    private let columns = [GridItem(.adaptive(minimum: 220), spacing: 16)]
-
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 16) {
+        // Always a single row: four equal-width cards (each is maxWidth .infinity).
+        HStack(spacing: 12) {
             MetricCard(
                 title: "Total balance",
                 value: Format.currency(summary.totalBalance, code: currency),
@@ -44,22 +43,24 @@ struct MetricCard: View {
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
                 Image(systemName: systemImage)
                     .foregroundStyle(tint)
                 Text(title)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 0)
             }
             Text(value)
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.5)
         }
-        .padding(18)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 14))
         .overlay(

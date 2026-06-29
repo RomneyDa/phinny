@@ -196,6 +196,12 @@ final class AppDatabase {
         }
     }
 
+    /// Whether an account row with this id exists (used to detect an
+    /// import-only database at launch).
+    func accountExists(id: String) -> Bool {
+        (try? dbQueue.read { db in try Account.exists(db, key: id) }) ?? false
+    }
+
     /// All transactions, newest first.
     func transactions() throws -> [Transaction] {
         try dbQueue.read { db in

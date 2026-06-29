@@ -1,17 +1,34 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The main screen: summary cards, charts, and recent transactions. Shown in
 /// both demo and connected modes (a banner marks demo mode).
 struct DashboardView: View {
     @EnvironmentObject private var state: AppState
+    @State private var showingImporter = false
 
     private var accountsById: [String: String] {
         Dictionary(uniqueKeysWithValues: state.accounts.map { ($0.id, $0.name) })
     }
 
+    /// File types the statement importer accepts. OFX/QFX/QBO have no standard
+    /// UTType, so we resolve them by extension and fall back to `.data` (the
+    /// parser validates the actual content).
+    private var importTypes: [UTType] {
+        var types: [UTType] = [.commaSeparatedText]
+        for ext in ["ofx", "qfx", "qbo"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        types.append(.data)
+        return types
+    }
+
+    private let importHelp =
+        "Export a closed monthly statement from the iPhone Wallet app (Apple Card > Card Balance > a statement > Export Transactions) as CSV, OFX, QFX, or QBO, then import it here."
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 14) {
                 header
 
                 if state.isDemo { demoBanner }
@@ -23,6 +40,15 @@ struct DashboardView: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.expense.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
+
+                if let msg = state.importMessage {
+                    Label(msg, systemImage: "checkmark.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(Theme.income)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.income.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
                 }
 
                 SummaryCards(summary: state.summary, currency: state.primaryCurrency)
@@ -48,24 +74,32 @@ struct DashboardView: View {
                     )
                 }
             }
-            .padding(24)
+            .padding(20)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .fileImporter(isPresented: $showingImporter,
+                      allowedContentTypes: importTypes,
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    Task { await state.importStatement(from: url) }
+                }
+            case .failure(let error):
+                state.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     private var header: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Phinny")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.brandGradient)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Spacer()
 
             if state.isDemo {
+                importButton(prominent: false)
                 Button {
                     state.errorMessage = nil
                     state.showingConnectSheet = true
@@ -73,6 +107,19 @@ struct DashboardView: View {
                     Label("Connect Account", systemImage: "link")
                 }
                 .buttonStyle(.borderedProminent)
+            } else if state.isImportOnly {
+                // Apple Card imports, no SimpleFIN account: nothing to sync.
+                importButton(prominent: true)
+                Menu {
+                    Button("Connect SimpleFIN Account…") {
+                        state.errorMessage = nil
+                        state.showingConnectSheet = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             } else {
                 Button {
                     Task { await state.sync(force: true) }
@@ -86,13 +133,39 @@ struct DashboardView: View {
                 }
 
                 Menu {
-                    Button("Disconnect…", role: .destructive) { state.disconnect() }
+                    Button {
+                        state.errorMessage = nil
+                        showingImporter = true
+                    } label: {
+                        Label("Import Apple Card Statement…", systemImage: "square.and.arrow.down")
+                    }
+                    Divider()
+                    Button("Disconnect…", role: .destructive) { Task { await state.disconnect() } }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
             }
+        }
+    }
+
+    /// "Import Apple Card" button used in demo and import-only modes.
+    @ViewBuilder
+    private func importButton(prominent: Bool) -> some View {
+        let action = {
+            state.errorMessage = nil
+            showingImporter = true
+        }
+        let label = Label("Import Apple Card…", systemImage: "square.and.arrow.down")
+        if prominent {
+            Button(action: action) { label }
+                .buttonStyle(.borderedProminent)
+                .help(importHelp)
+        } else {
+            Button(action: action) { label }
+                .buttonStyle(.bordered)
+                .help(importHelp)
         }
     }
 

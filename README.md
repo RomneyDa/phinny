@@ -14,6 +14,7 @@
 - **Tracks mortgages** without logging every payment: enter the loan, rate, and down payment and Phinny computes the whole amortization, equity, and payoff. Adjust the rate and home value over time, add extra principal payments, and link a real expense as the recurring payment (with historical auto-detection).
 - **Categorizes spending** into your own categories: tag any transaction from the dashboard (or scope a tag to a date range), and the Top Spending chart groups by your categories. The data model is built for a future AI auto-categorizer, with a manual-versus-auto flag so your manual tags are never overwritten.
 - **Detects transfers** between your own accounts (offsetting amounts a few days apart) and keeps them out of your income and spending totals. A permanent Transfer category does the excluding; you can mark anything as a transfer (or "not a transfer") and your choice always wins over auto-detection.
+- **Imports Apple Card** statements that SimpleFIN can't reach. Apple blocks aggregators (Plaid/MX/SimpleFIN) from Apple Card, so Phinny imports the file you export from the iPhone Wallet app (CSV, OFX, QFX, or QBO). It can even run on Apple Card alone, with no SimpleFIN account connected. See [Apple Card import](#apple-card-import).
 - **Stores everything locally** - SQLite database in `~/.phinny`, credentials in the macOS Keychain. Nothing leaves your machine except the SimpleFIN request itself.
 
 <div align="center"><img src="docs/screenshot.png" width="760" alt="Phinny dashboard" /></div>
@@ -33,6 +34,7 @@ SimpleFIN  ──claim──►  access URL (Keychain)
 | Entry | `Sources/PhinnyApp.swift` | App + window, kicks off `bootstrap()` |
 | State | `Sources/AppState.swift` | Single `@MainActor` source of truth; sync policy |
 | Network | `Sources/SimpleFINClient.swift` | Claim token, fetch accounts (the only rate-limited call) |
+| Import | `Sources/StatementImporter.swift` | Pure parser for Apple Card CSV/OFX/QFX/QBO exports |
 | Storage | `Sources/Database.swift` | GRDB/SQLite schema, reads & writes |
 | Secrets | `Sources/Keychain.swift` | SimpleFIN access URL in the macOS Keychain |
 | Config | `Sources/Config.swift` | `~/.phinny/config.yaml` (non-sensitive settings) |
@@ -48,6 +50,16 @@ Phinny has two modes:
 - **Connected**: once a SimpleFIN access URL is in the Keychain, the app reads/writes the real `~/.phinny/phinny.sqlite` and syncs.
 
 The bundled demo database is generated from `Sources/DemoData.swift` via the real DB code, so it always matches the schema. Regenerate it with `./scripts/generate-demo-db.sh` (commit the resulting `Resources/phinny-demo.sqlite`).
+
+### Apple Card import
+
+Apple Card is the one account SimpleFIN can't sync: Apple deliberately blocks third-party aggregators (Plaid, MX, and therefore SimpleFIN) from Apple Card data. The only reliable feed is the statement file you export yourself.
+
+On your **iPhone or iPad** (there is no Mac equivalent), open Wallet → Apple Card → Card Balance → a **closed monthly statement** → **Export Transactions**, choose CSV / OFX / QFX / QBO, and send the file to your Mac (AirDrop, Files, or iCloud). In Phinny, use **Import Apple Card** (in the dashboard header, or the ⋯ menu when connected) and pick the file.
+
+- **Standalone or supplemental.** If you only have an Apple Card, import works with no SimpleFIN account connected at all (an "import-only" mode). Phinny opens the real `~/.phinny/phinny.sqlite` and hides "Sync Now" since there's nothing to sync.
+- **Closed statements only.** Apple only exports a statement once its cycle closes, so the current/unbilled cycle won't appear yet. This is an inherently monthly, manual import.
+- **Idempotent.** Re-importing an overlapping month doesn't create duplicates: OFX/QFX rows carry a stable id (`FITID`), and CSV rows (which have none) are keyed by a deterministic content hash. Apple Card lands as a single synthetic account, and `StatementImporter` normalizes amounts to Phinny's sign convention (a purchase is spending). Imported transactions categorize, link to mortgages, and auto-detect as transfers exactly like synced ones.
 
 ### Mortgages
 

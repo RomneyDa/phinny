@@ -38,12 +38,17 @@ final class AppState: ObservableObject {
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSync: Date?
     @Published var errorMessage: String?
+    /// Transient result of the last statement import (e.g. "Imported 47...").
+    @Published var importMessage: String?
     @Published var showingConnectSheet = false
 
     private var config = Config()
     private var database: AppDatabase?
 
     var isDemo: Bool { phase == .demo }
+    /// Ready with imported data but no SimpleFIN account connected. In this mode
+    /// there is nothing to sync, so the dashboard hides "Sync Now".
+    var isImportOnly: Bool { phase == .ready && accessURL == nil }
     private var accessURL: String? { Keychain.accessURL() }
 
     // MARK: - Lifecycle
@@ -91,8 +96,15 @@ final class AppState: ObservableObject {
         }
         #endif
 
+        // Connected to SimpleFIN -> open + auto-sync the real DB. If there's no
+        // token but a real DB already exists (e.g. Apple Card statements were
+        // imported), reopen it in import-only mode (no sync). Otherwise demo.
         if Keychain.hasAccessURL {
             await enterConnectedMode(autoSync: true)
+        } else if FileManager.default.fileExists(atPath: Paths.databaseFile.path),
+                  let db = try? AppDatabase(path: Paths.databaseFile),
+                  db.accountExists(id: StatementImporter.accountId) {
+            await enterConnectedMode(autoSync: false)
         } else {
             enterDemoMode()
         }
@@ -172,11 +184,47 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Forget the SimpleFIN connection and fall back to demo data.
-    func disconnect() {
+    /// Forget the SimpleFIN connection. If Apple Card statements were imported,
+    /// keep that data (import-only mode); otherwise fall back to demo data.
+    func disconnect() async {
         Keychain.deleteAccessURL()
         errorMessage = nil
-        enterDemoMode()
+        if let db = try? AppDatabase(path: Paths.databaseFile),
+           db.accountExists(id: StatementImporter.accountId) {
+            await enterConnectedMode(autoSync: false)
+        } else {
+            enterDemoMode()
+        }
+    }
+
+    // MARK: - Statement import (Apple Card)
+
+    /// Import an Apple Card statement file (CSV / OFX / QFX / QBO) exported from
+    /// the iPhone Wallet app. Writes through the same upsert path as sync, so
+    /// re-importing an overlapping month is idempotent. Switches out of demo mode
+    /// into the real (import-only) database on first import.
+    func importStatement(from url: URL) async {
+        errorMessage = nil
+        importMessage = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            let result = try StatementImporter.parse(data: data, filename: url.lastPathComponent)
+
+            // Make sure we write to the real DB, never the demo copy.
+            if database == nil || isDemo {
+                database = try AppDatabase(path: Paths.databaseFile)
+                phase = .ready
+            }
+            try database?.replace(accounts: result.accounts, transactions: result.transactions)
+            loadFromDatabase()
+            autoDetectTransfers()
+            let n = result.transactions.count
+            importMessage = "Imported \(n) Apple Card transaction\(n == 1 ? "" : "s")."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     // MARK: - Sync
