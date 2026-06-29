@@ -39,7 +39,7 @@ func draw(size: Int) -> NSBitmapImageRep {
     let t = NSAffineTransform()
     t.translateX(by: rect.midX, yBy: rect.midY - rect.height * 0.02)
     t.rotate(byDegrees: 26)
-    let koiScale = s * 0.54
+    let koiScale = s * 0.66
     t.scaleX(by: koiScale, yBy: koiScale)
     func place(_ path: NSBezierPath) -> NSBezierPath { t.transform(path) }
 
