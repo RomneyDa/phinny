@@ -25,9 +25,13 @@ struct Mortgage: Codable, Identifiable, Hashable, FetchableRecord, PersistableRe
     /// Epoch seconds of the first scheduled payment / origination.
     var startDate: Int
     /// Signature of the synced transaction used as the recurring payment, set
-    /// when the user marks an expense as this mortgage's payment.
+    /// when the user marks an expense as this mortgage's payment. Auto-detection
+    /// links every expense on `paymentAccountId` whose title matches
+    /// `paymentPayee` (account + title, not amount). `paymentAccountId` is nil for
+    /// older links / amount-only suggestions, in which case the account is ignored.
     var paymentPayee: String?
     var paymentAmount: Double?
+    var paymentAccountId: String? = nil
     var createdAt: Int
 
     static let databaseTableName = "mortgage"

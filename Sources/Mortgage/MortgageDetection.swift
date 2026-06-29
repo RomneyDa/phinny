@@ -13,27 +13,21 @@ enum MortgageDetection {
             .trimmingCharacters(in: .whitespaces)
     }
 
-    /// All transactions that match this mortgage's payment signature. Prefers a
-    /// payee match; falls back to amount proximity when no payee is set.
+    /// All transactions that match this mortgage's payment signature: same
+    /// account AND same title (payee/description) as the marked payment. Amount is
+    /// deliberately ignored, so an escrow change or extra principal on the same
+    /// auto-pay still links. `paymentAccountId` is nil for older links and
+    /// amount-only suggestions, in which case the account constraint is skipped.
     static func matches(_ transactions: [Transaction], for m: Mortgage) -> [Transaction] {
-        if let payee = m.paymentPayee, !payee.isEmpty {
-            let sig = normalize(payee)
-            guard !sig.isEmpty else { return [] }
-            return transactions.filter { txn in
-                guard txn.isExpense else { return false }
-                let label = normalize(txn.payee ?? txn.descriptionText)
-                return !label.isEmpty && (label.contains(sig) || sig.contains(label))
-            }
+        guard let payee = m.paymentPayee, !payee.isEmpty else { return [] }
+        let sig = normalize(payee)
+        guard !sig.isEmpty else { return [] }
+        return transactions.filter { txn in
+            guard txn.isExpense else { return false }
+            if let account = m.paymentAccountId, txn.accountId != account { return false }
+            let label = normalize(txn.payee ?? txn.descriptionText)
+            return !label.isEmpty && (label.contains(sig) || sig.contains(label))
         }
-        if let amount = m.paymentAmount {
-            return transactions.filter { $0.isExpense && amountsMatch(abs($0.amount), abs(amount)) }
-        }
-        return []
-    }
-
-    static func amountsMatch(_ a: Double, _ b: Double) -> Bool {
-        guard b > 0 else { return false }
-        return abs(a - b) <= max(25, b * 0.02)   // within $25 or 2%
     }
 
     /// A suggested recurring payment found in the transaction history.

@@ -302,14 +302,44 @@ final class AppState: ObservableObject {
         loadFromDatabase()
     }
 
-    /// Mark a synced transaction as this mortgage's payment, then auto-link all
-    /// matching historical transactions.
-    func markAsPayment(_ txn: Transaction, mortgageId: String) {
-        guard var m = mortgages.first(where: { $0.id == mortgageId }) else { return }
+    /// Mark a synced transaction as this mortgage's payment, then auto-link every
+    /// other expense on the same account with the same title. Returns the total
+    /// number of linked transactions (so the UI can confirm the auto-detection).
+    @discardableResult
+    func markAsPayment(_ txn: Transaction, mortgageId: String) -> Int {
+        guard var m = mortgages.first(where: { $0.id == mortgageId }) else { return 0 }
         m.paymentPayee = txn.payee ?? txn.descriptionText
         m.paymentAmount = txn.amount
+        m.paymentAccountId = txn.accountId
         try? database?.saveMortgage(m)
         relinkPayments(for: m)
+        return linkedTransactionIds(for: mortgageId).count
+    }
+
+    /// The mortgage a transaction is linked to as a payment, if any.
+    func mortgage(forPayment txn: Transaction) -> Mortgage? {
+        guard let link = paymentLinks.first(where: { $0.transactionId == txn.id }) else { return nil }
+        return mortgages.first(where: { $0.id == link.mortgageId })
+    }
+
+    /// Unlink a single transaction from being a mortgage payment. The mortgage's
+    /// payment signature is left intact, so other matches stay linked.
+    func unlinkPayment(_ txn: Transaction) {
+        try? database?.removePaymentLink(transactionId: txn.id)
+        loadFromDatabase()
+    }
+
+    /// Transactions that share this one's account and title (normalized
+    /// payee/description), including itself, newest first. This is the same
+    /// account + title grouping mortgage linking uses, so it doubles as a preview
+    /// of what "link to mortgage" would catch.
+    func similarTransactions(to txn: Transaction) -> [Transaction] {
+        let sig = MortgageDetection.normalize(txn.payee ?? txn.descriptionText)
+        guard !sig.isEmpty else { return [txn] }
+        return transactions.filter {
+            $0.accountId == txn.accountId
+                && MortgageDetection.normalize($0.payee ?? $0.descriptionText) == sig
+        }
     }
 
     func applyDetectedPayment(_ suggestion: MortgageDetection.Suggestion, mortgageId: String) {

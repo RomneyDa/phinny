@@ -159,6 +159,12 @@ final class AppDatabase {
                 t.column("createdAt", .integer).notNull()
             }
         }
+
+        migrator.registerMigration("v7") { db in
+            try db.alter(table: "mortgage") { t in
+                t.add(column: "paymentAccountId", .text)
+            }
+        }
         return migrator
     }
 
@@ -258,6 +264,9 @@ final class AppDatabase {
         _ = try dbQueue.write { db in
             try MortgagePaymentLink.filter(Column("mortgageId") == mortgageId).deleteAll(db)
         }
+    }
+    func removePaymentLink(transactionId: String) throws {
+        _ = try dbQueue.write { db in try MortgagePaymentLink.deleteOne(db, key: transactionId) }
     }
 
     // MARK: - Categories

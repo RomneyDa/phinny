@@ -191,6 +191,7 @@ enum DemoData {
             downKind: "percent", downValue: 20, annualRate: 6.75, termMonths: 360,
             startDate: ago(months: 36),
             paymentPayee: "Sunset Mortgage Co", paymentAmount: -2300,
+            paymentAccountId: checkingId,
             createdAt: Int(now.timeIntervalSince1970)
         )
         try db.saveMortgage(m)
