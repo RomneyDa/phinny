@@ -41,7 +41,7 @@ final class KeyCatcherView: NSView {
                 guard let self, self.shouldSwallowMomentum(event) else { return event }
                 return nil
             }
-            monitors = [key, wheel]
+            monitors = [key, wheel].compactMap { $0 }
         }
     }
 
@@ -116,6 +116,8 @@ final class KeyCatcherView: NSView {
         let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height)
         let target = min(max(0, y), maxY)
         let point = NSPoint(x: clip.bounds.origin.x, y: target)
+        // Suppress any trackpad momentum still arriving so it can't undo the jump.
+        momentumKillUntil = Date().addingTimeInterval(0.6)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
             ctx.allowsImplicitAnimation = true
