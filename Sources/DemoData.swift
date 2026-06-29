@@ -114,6 +114,22 @@ enum DemoData {
         try db.recordSync(at: Date())
         try generateMortgage(in: db)
         try generateCategories(in: db, transactions: txns)
+        try generateTransfers(in: db, transactions: txns)
+    }
+
+    /// Auto-tag the demo's between-account transfers (the monthly checking ->
+    /// savings moves) so the Transfer category and its "excluded from totals"
+    /// behavior are visible out of the box. Uses the same detection the app runs.
+    private static func generateTransfers(in db: AppDatabase, transactions txns: [Transaction]) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let detected = TransferDetection.detect(in: txns)
+        var seq = 0
+        for txn in txns where detected.contains(txn.id) {
+            try db.saveExpenseCategory(ExpenseCategory(
+                id: "demo-tx-\(seq)", transactionId: txn.id, categoryId: SpendCategory.transferId,
+                startDate: nil, endDate: nil, isAuto: true, createdAt: now))
+            seq += 1
+        }
     }
 
     /// Seed a few categories and auto-categorize the demo transactions by their

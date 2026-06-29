@@ -33,6 +33,8 @@ final class AppState: ObservableObject {
     @Published private(set) var paymentLinks: [MortgagePaymentLink] = []
     @Published private(set) var categories: [SpendCategory] = []
     @Published private(set) var expenseCategories: [ExpenseCategory] = []
+    /// Transaction ids the user explicitly marked "not a transfer".
+    @Published private(set) var transferExclusions: Set<String> = []
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSync: Date?
     @Published var errorMessage: String?
@@ -194,6 +196,7 @@ final class AppState: ObservableObject {
             try database.recordSync(at: now)
             lastSync = now
             loadFromDatabase()
+            autoDetectTransfers()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -210,6 +213,7 @@ final class AppState: ObservableObject {
         paymentLinks = (try? database.paymentLinks()) ?? []
         categories = (try? database.categories()) ?? []
         expenseCategories = (try? database.expenseCategories()) ?? []
+        transferExclusions = Set((try? database.transferExclusions())?.map { $0.transactionId } ?? [])
     }
 
     // MARK: - Mortgages
@@ -434,6 +438,7 @@ final class AppState: ObservableObject {
         loadFromDatabase()
     }
     func deleteCategory(_ id: String) {
+        guard id != SpendCategory.transferId else { return }   // permanent
         try? database?.deleteCategory(id: id)   // cascades to its links
         loadFromDatabase()
     }
@@ -505,16 +510,74 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Transfers
+
+    /// The permanent Transfer category (seeded by migration v6).
+    var transferCategory: SpendCategory? { categoriesById[SpendCategory.transferId] }
+
+    /// True if the transaction's effective category is flagged as a transfer, so
+    /// it should not count toward income or spending.
+    func isTransfer(_ txn: Transaction) -> Bool {
+        effectiveCategory(for: txn)?.isTransfer == true
+    }
+
+    /// Manually mark a transaction as a transfer (a normal manual link to the
+    /// Transfer category) and clear any "not a transfer" override.
+    func markAsTransfer(_ txn: Transaction) {
+        try? database?.deleteTransferExclusion(transactionId: txn.id)
+        addManualLink(transactionId: txn.id, categoryId: SpendCategory.transferId)
+    }
+
+    /// Manually mark a transaction as NOT a transfer: drop any transfer links
+    /// (manual or auto) and remember the decision so auto-detection never
+    /// re-tags it.
+    func markNotTransfer(_ txn: Transaction) {
+        for link in links(forTransaction: txn.id) where link.categoryId == SpendCategory.transferId {
+            try? database?.deleteExpenseCategory(id: link.id)
+        }
+        try? database?.saveTransferExclusion(transactionId: txn.id)
+        loadFromDatabase()
+    }
+
+    /// Scan all transactions for transfer pairs and auto-link both legs to the
+    /// Transfer category. Respects manual intent (skips transactions with any
+    /// manual link) and "not a transfer" overrides. Returns the number of newly
+    /// linked transactions. Pure detection lives in `TransferDetection`.
+    @discardableResult
+    func autoDetectTransfers() -> Int {
+        guard let database, let cat = transferCategory else { return 0 }
+        let detected = TransferDetection.detect(in: transactions)
+        var added = 0
+        for id in detected {
+            if transferExclusions.contains(id) { continue }
+            let existing = links(forTransaction: id)
+            if existing.contains(where: { !$0.isAuto }) { continue }            // manual wins
+            if existing.contains(where: { $0.categoryId == cat.id }) { continue } // already linked
+            let link = ExpenseCategory(
+                id: newId(), transactionId: id, categoryId: cat.id,
+                startDate: nil, endDate: nil, isAuto: true, createdAt: epoch(Date()))
+            try? database.saveExpenseCategory(link)
+            added += 1
+        }
+        if added > 0 { loadFromDatabase() }
+        return added
+    }
+
     // MARK: - Derived data for the dashboard
 
+    /// Transactions that count as real income/spending (transfers removed).
+    private var spendingTransactions: [Transaction] {
+        transactions.filter { !isTransfer($0) }
+    }
+
     var summary: Analytics.Summary {
-        Analytics.summary(accounts: accounts, transactions: transactions)
+        Analytics.summary(accounts: accounts, transactions: spendingTransactions)
     }
     var monthlyFlows: [Analytics.MonthlyFlow] {
-        Analytics.monthlyFlows(transactions)
+        Analytics.monthlyFlows(spendingTransactions)
     }
     var topSpending: [Analytics.CategorySpend] {
-        Analytics.topSpending(transactions) { [self] in categoryLabel(for: $0) }
+        Analytics.topSpending(spendingTransactions) { [self] in categoryLabel(for: $0) }
     }
     var primaryCurrency: String { accounts.first?.currency ?? "USD" }
 }

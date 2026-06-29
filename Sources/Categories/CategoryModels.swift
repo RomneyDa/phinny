@@ -10,10 +10,34 @@ struct SpendCategory: Codable, Identifiable, Hashable, FetchableRecord, Persista
     /// Hex color (e.g. "#6366F1") used for the chip + chart segment.
     var colorHex: String
     var createdAt: Int
+    /// When true, transactions in this category do not count toward income or
+    /// spending (they are money moved between your own accounts). The permanent
+    /// "Transfer" category has this set; the column is generic so any category
+    /// could be flagged the same way.
+    var isTransfer: Bool = false
 
     // Named "category" in SQLite; the Swift type avoids the bare name `Category`,
     // which collides with a clang-imported C symbol.
     static let databaseTableName = "category"
+
+    /// Stable id of the permanent, hard-coded Transfer category (seeded by
+    /// migration v6). It is never deletable.
+    static let transferId = "transfer"
+
+    /// True for built-in categories the user cannot delete.
+    var isPermanent: Bool { id == Self.transferId }
+}
+
+/// Marks a transaction as explicitly "not a transfer" so auto-detection does not
+/// re-tag it. Marking a transaction AS a transfer reuses the normal manual
+/// `ExpenseCategory` link to the Transfer category; only the negative decision
+/// needs its own record.
+struct TransferExclusion: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
+    var transactionId: String
+    var createdAt: Int
+
+    var id: String { transactionId }
+    static let databaseTableName = "transfer_exclusion"
 }
 
 /// Links a transaction (expense) to a `Category`. This is the structure both

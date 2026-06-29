@@ -140,6 +140,25 @@ final class AppDatabase {
                 t.column("createdAt", .integer).notNull()
             }
         }
+        // v6: transfers. A boolean on `category` marks a category as "money moved
+        // between your own accounts" (excluded from income/spending). A permanent
+        // Transfer category is seeded here. `transfer_exclusion` records the
+        // transactions the user explicitly marked "not a transfer" so
+        // auto-detection never re-tags them.
+        migrator.registerMigration("v6") { db in
+            try db.alter(table: "category") { t in
+                t.add(column: "isTransfer", .boolean).notNull().defaults(to: false)
+            }
+            try db.execute(
+                sql: "INSERT INTO category (id, name, colorHex, createdAt, isTransfer) " +
+                     "VALUES (?, ?, ?, ?, 1)",
+                arguments: [SpendCategory.transferId, "Transfer", "#64748B", 0]
+            )
+            try db.create(table: "transfer_exclusion") { t in
+                t.primaryKey("transactionId", .text)
+                t.column("createdAt", .integer).notNull()
+            }
+        }
         return migrator
     }
 
@@ -269,6 +288,21 @@ final class AppDatabase {
             try ExpenseCategory.filter(Column("transactionId") == transactionId).deleteAll(db)
             for l in links { try l.save(db) }
         }
+    }
+
+    // MARK: - Transfers
+
+    func transferExclusions() throws -> [TransferExclusion] {
+        try dbQueue.read { db in try TransferExclusion.fetchAll(db) }
+    }
+    func saveTransferExclusion(transactionId: String) throws {
+        try dbQueue.write { db in
+            try TransferExclusion(transactionId: transactionId,
+                                  createdAt: Int(Date().timeIntervalSince1970)).save(db)
+        }
+    }
+    func deleteTransferExclusion(transactionId: String) throws {
+        _ = try dbQueue.write { db in try TransferExclusion.deleteOne(db, key: transactionId) }
     }
 
     // MARK: - Meta helpers

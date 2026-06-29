@@ -6,6 +6,7 @@ import SwiftUI
 struct CategoriesView: View {
     @EnvironmentObject private var state: AppState
     @State private var newName = ""
+    @State private var transferMessage: String?
 
     var body: some View {
         ScrollView {
@@ -26,6 +27,28 @@ struct CategoriesView: View {
                         Button("Add", action: create)
                             .buttonStyle(.borderedProminent)
                             .disabled(trimmedName.isEmpty)
+                    }
+                }
+
+                CardSection("Transfers") {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Find money moved between your own accounts and tag it as a transfer so it does not count as income or spending.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let transferMessage {
+                                Text(transferMessage)
+                                    .font(.caption).foregroundStyle(Theme.accent)
+                            }
+                        }
+                        Spacer()
+                        Button("Detect transfers") {
+                            let n = state.autoDetectTransfers()
+                            transferMessage = n == 0
+                                ? "No new transfers found."
+                                : "Tagged \(n) transaction\(n == 1 ? "" : "s") as transfers."
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
 
@@ -77,27 +100,38 @@ private struct CategoryRow: View {
         HStack(spacing: 12) {
             ColorMenu(category: category)
 
-            TextField("Name", text: $name)
-                .textFieldStyle(.plain)
-                .onSubmit(commitName)
+            if category.isPermanent {
+                Text(category.name)
+                Text("excluded from totals")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.12), in: Capsule())
+            } else {
+                TextField("Name", text: $name)
+                    .textFieldStyle(.plain)
+                    .onSubmit(commitName)
+            }
 
             Spacer()
 
             Text("\(usage) txn\(usage == 1 ? "" : "s")")
                 .font(.caption).foregroundStyle(.secondary)
 
-            Button {
-                showDelete = true
-            } label: {
-                Image(systemName: "trash").foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .confirmationDialog("Delete \"\(category.name)\"?", isPresented: $showDelete) {
-                Button("Delete category", role: .destructive) { state.deleteCategory(category.id) }
-            } message: {
-                Text(usage == 0
-                     ? "This category has no transactions."
-                     : "This will remove it from \(usage) transaction\(usage == 1 ? "" : "s").")
+            if !category.isPermanent {
+                Button {
+                    showDelete = true
+                } label: {
+                    Image(systemName: "trash").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .confirmationDialog("Delete \"\(category.name)\"?", isPresented: $showDelete) {
+                    Button("Delete category", role: .destructive) { state.deleteCategory(category.id) }
+                } message: {
+                    Text(usage == 0
+                         ? "This category has no transactions."
+                         : "This will remove it from \(usage) transaction\(usage == 1 ? "" : "s").")
+                }
             }
         }
         .padding(.vertical, 9)

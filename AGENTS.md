@@ -26,7 +26,9 @@ Sources/
                             ZillowScraper (offscreen WKWebView Zestimate lookup;
                             prefers a pasted homedetails URL over address search)
   Categories/               CategoryModels (SpendCategory + ExpenseCategory link
-                            with isAuto flag and optional effective date range)
+                            with isAuto flag and optional effective date range;
+                            TransferExclusion), TransferDetection (pure: spots
+                            offsetting cross-account pairs)
   Views/                    SwiftUI: RootView, MainView (sidebar), Dashboard, Charts,
                             OnboardingView (connect sheet),
                             Mortgage/ (detail, editor, InteractiveHomeValueChart, AddressField),
@@ -77,6 +79,7 @@ The `.xcodeproj` and `Resources/Info.plist` are **generated** (git-ignored). Nev
 - New settings → add to `Config.Sync` (YAML). New secrets → `Keychain.swift`. New stored data → a GRDB migration in `Database.swift` (append a new `registerMigration`, never edit an existing one).
 - Mortgage math source of truth: balance/equity/payoff always come from `MortgageEngine` (loan terms), never from linked payment amounts. Linked payments are display-only and feed the escrow back-calculation (actual payment − scheduled P&I). Don't let a real payment amount drive the amortization.
 - Categorization: a `SpendCategory` is global (user- or future-AI-created). An `expense_category` row links one transaction to one category, with `isAuto` (manual vs auto) and an optional effective window (`startDate`/`endDate`, both nil = always). The Swift type is `SpendCategory`, not `Category` (the bare name collides with a clang-imported C symbol). Conflict rule: two links conflict only when `transactionId` AND `categoryId` match AND their windows overlap, so an expense can hold several categories and the same expense+category can repeat across non-overlapping windows. Manual links are never overridden by auto-categorization: `AppState.autoAssign` skips any transaction that already has a manual link. Resolution for charts/chips prefers manual over auto, then newest.
+- Transfers: a `category.isTransfer` flag means "money moved between your own accounts" so those transactions are excluded from income/spending. There is one permanent, hard-coded Transfer category (id `SpendCategory.transferId` = "transfer", seeded by migration v6, not deletable). Marking a transaction AS a transfer reuses the normal manual `ExpenseCategory` link to that category. Marking it NOT a transfer drops any transfer links and records a `transfer_exclusion` row so auto-detection never re-tags it. `TransferDetection` (pure) finds offsetting cross-account pairs within `defaultWindowDays` (3); `AppState.autoDetectTransfers()` runs it after every sync (and from the Categories view) and auto-links both legs, respecting manual links and exclusions. Analytics exclude transfers via `AppState.spendingTransactions`, keeping `Analytics` pure (it only ever sees pre-filtered transactions). The transaction list still shows transfers with their chip.
 
 ## Common tasks
 

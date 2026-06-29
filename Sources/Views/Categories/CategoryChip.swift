@@ -37,8 +37,11 @@ struct CategoryPickerMenu: View {
         Set(state.links(forTransaction: transaction.id).map { $0.categoryId })
     }
 
+    /// Normal (non-transfer) categories; the Transfer category has its own toggle.
+    private var pickable: [SpendCategory] { state.categories.filter { !$0.isPermanent } }
+
     var body: some View {
-        ForEach(state.categories) { c in
+        ForEach(pickable) { c in
             Button {
                 state.setCategory(transaction, categoryId: c.id)
             } label: {
@@ -49,10 +52,15 @@ struct CategoryPickerMenu: View {
                 }
             }
         }
-        if state.categories.isEmpty {
+        if pickable.isEmpty {
             Text("No categories yet")
         }
         Divider()
+        if state.isTransfer(transaction) {
+            Button("Not a transfer") { state.markNotTransfer(transaction) }
+        } else {
+            Button("Mark as transfer") { state.markAsTransfer(transaction) }
+        }
         Button("With date range / multiple…", action: onAdvanced)
         if !current.isEmpty {
             Button("Clear category", role: .destructive) {
