@@ -34,7 +34,7 @@ struct IncomeExpenseChart: View {
         .chartXAxis {
             AxisMarks(values: .stride(by: .month)) { value in
                 AxisGridLine()
-                AxisValueLabel(format: .dateTime.month(.narrow))
+                AxisValueLabel(format: .dateTime.month(.abbreviated))
             }
         }
         .chartYAxis {
@@ -89,7 +89,7 @@ struct CashflowChart: View {
         .chartXAxis {
             AxisMarks(values: .stride(by: .month)) { _ in
                 AxisGridLine()
-                AxisValueLabel(format: .dateTime.month(.narrow))
+                AxisValueLabel(format: .dateTime.month(.abbreviated))
             }
         }
         .chartYAxis {
