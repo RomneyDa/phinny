@@ -8,25 +8,29 @@
 
 ## Why I built this
 
-I wanted to see my own finances clearly and was not satisfied with what was out there:
+I wanted to see my own finances clearly, and nothing out there fit:
 
-- **The pricing is backwards.** A lot of personal-finance apps run around $200 a year. SimpleFIN is $15 a year, and that one connection works with *any* app that speaks the protocol, not just this one. You pay for the bank link, not for a walled garden.
-- **The data should be local and AI-reachable.** Existing apps keep your transactions locked in their cloud. Phinny syncs everything into a plain local SQLite database, which means an AI agent on your own machine can read and reason over it directly.
-- **Transfers and mortgages are usually handled badly.** I have never liked how other apps double-count transfers between my own accounts or force me to log every mortgage payment. Phinny detects transfers automatically and computes the entire mortgage amortization from the loan terms, so the interfaces stay simple instead of getting more complicated the more you track.
-- **Awareness beats budgeting.** I have found that just clearly seeing what I earn and spend changes my behavior more than any budget envelope. Most budgeting apps feel too budget-centric. Phinny is built to *show* you your income and spending plainly, not to make you manage a budget.
+- **The pricing is backwards.** Most personal-finance apps run about $200 a year. SimpleFIN is $15, and that one connection works with any app that speaks the protocol. You pay for the bank link, not a walled garden.
+- **My data should be local.** Other apps keep your transactions in their cloud. Phinny syncs everything to a plain local SQLite file, so an AI agent on your own machine can read it directly.
+- **Transfers and mortgages are handled badly elsewhere.** I never liked apps double-counting transfers between my own accounts, or making me log every mortgage payment. Phinny detects transfers on its own and computes the whole mortgage from the loan terms.
+- **Awareness beats budgeting.** Just seeing what I earn and spend changes my behavior more than any budget envelope. Phinny shows you that plainly instead of asking you to manage a budget.
 
 ## What it does
 
-- **Connect once** with a SimpleFIN setup token (or try the built-in demo).
-- **Syncs automatically** on launch - but only when the data is stale, to respect SimpleFIN's ~24 requests/day budget.
-- **Visualizes** income vs. spending, net cash flow, top spending, and recent transactions with native [Swift Charts](https://developer.apple.com/documentation/charts).
-- **Tracks mortgages** without logging every payment: enter the loan, rate, and down payment and Phinny computes the whole amortization, equity, and payoff. Adjust the rate and home value over time, add extra principal payments, and link a real expense as the recurring payment (with historical auto-detection).
-- **Categorizes spending** into your own categories: tag any transaction from the dashboard (or scope a tag to a date range), and the Top Spending chart groups by your categories. The data model is built for a future AI auto-categorizer, with a manual-versus-auto flag so your manual tags are never overwritten.
-- **Detects transfers** between your own accounts (offsetting amounts a few days apart) and keeps them out of your income and spending totals. A permanent Transfer category does the excluding; you can mark anything as a transfer (or "not a transfer") and your choice always wins over auto-detection.
-- **Imports Apple Card** statements that SimpleFIN can't reach. Apple blocks aggregators (Plaid/MX/SimpleFIN) from Apple Card, so Phinny imports the file you export from the iPhone Wallet app (CSV, OFX, QFX, or QBO). It can even run on Apple Card alone, with no SimpleFIN account connected. See [Apple Card import](#apple-card-import).
-- **Stores everything locally** - SQLite database in `~/.phinny`, credentials in the macOS Keychain. Nothing leaves your machine except the SimpleFIN request itself.
+- **Connect once** with a SimpleFIN setup token, or try the built-in demo.
+- **Syncs on launch**, but only when the data is stale, to respect SimpleFIN's ~24 requests/day budget.
+- **Charts** income vs. spending, net cash flow, top spending, and recent transactions with native [Swift Charts](https://developer.apple.com/documentation/charts).
+- **Tracks mortgages** without logging every payment: enter the loan, rate, and down payment, and Phinny computes the amortization, equity, and payoff. Adjust the rate and home value over time, add extra principal, and link a real payment.
+- **Categorizes spending** into your own categories: tag any transaction and the Top Spending chart groups by them. Manual tags are flagged so a future auto-categorizer never overwrites them.
+- **Detects transfers** between your own accounts and keeps them out of your income and spending totals. Mark anything as a transfer (or not) and your choice always wins.
+- **Imports Apple Card** statements SimpleFIN can't reach (CSV/OFX/QFX/QBO exported from the iPhone Wallet app), and runs on Apple Card alone if that's all you have. See [Apple Card import](#apple-card-import).
+- **Keeps everything local**: SQLite in `~/.phinny`, credentials in the macOS Keychain. Nothing leaves your machine but the SimpleFIN request itself.
 
 <div align="center"><img src="docs/screenshot.png" width="760" alt="Phinny dashboard" /></div>
+
+---
+
+The rest is for the curious and for anyone who wants to build it.
 
 ## Architecture
 
