@@ -69,6 +69,7 @@ struct CategoriesView: View {
             }
             .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }

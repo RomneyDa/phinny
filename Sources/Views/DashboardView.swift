@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// both demo and connected modes (a banner marks demo mode).
 struct DashboardView: View {
     @EnvironmentObject private var state: AppState
-    @State private var showingImporter = false
+    @State private var showingImportInfo = false
 
     private var accountsById: [String: String] {
         Dictionary(uniqueKeysWithValues: state.accounts.map { ($0.id, $0.name) })
@@ -78,17 +78,8 @@ struct DashboardView: View {
             .scrollKeyboardNavigation()
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .fileImporter(isPresented: $showingImporter,
-                      allowedContentTypes: importTypes,
-                      allowsMultipleSelection: false) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first {
-                    Task { await state.importStatement(from: url) }
-                }
-            case .failure(let error):
-                state.errorMessage = error.localizedDescription
-            }
+        .sheet(isPresented: $showingImportInfo) {
+            ImportAppleCardSheet(importTypes: importTypes)
         }
     }
 
@@ -136,7 +127,7 @@ struct DashboardView: View {
                 Menu {
                     Button {
                         state.errorMessage = nil
-                        showingImporter = true
+                        showingImportInfo = true
                     } label: {
                         Label("Import Apple Card Statement…", systemImage: "square.and.arrow.down")
                     }
@@ -156,7 +147,7 @@ struct DashboardView: View {
     private func importButton(prominent: Bool) -> some View {
         let action = {
             state.errorMessage = nil
-            showingImporter = true
+            showingImportInfo = true
         }
         let label = Label("Import Apple Card…", systemImage: "square.and.arrow.down")
         if prominent {
