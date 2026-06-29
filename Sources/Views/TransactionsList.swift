@@ -11,6 +11,9 @@ struct TransactionsList: View {
     let accountsById: [String: String]
     let currency: String
     var batchSize: Int = 50
+    /// Cap the table's height so it scrolls on its own instead of pushing the
+    /// rest of the dashboard far off-screen.
+    var maxHeight: CGFloat = 460
 
     @State private var categorizing: Transaction?
     @State private var detailing: Transaction?
@@ -21,27 +24,38 @@ struct TransactionsList: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(visible.enumerated()), id: \.element.id) { index, txn in
-                row(txn)
-                    .onAppear { loadMore(reachedIndex: index) }
-                if index != visible.count - 1 { Divider() }
+        rows
+            .sheet(item: $categorizing) { txn in
+                AssignCategorySheet(transaction: txn)
             }
+            .sheet(item: $detailing) { txn in
+                TransactionDetailSheet(transaction: txn, accountsById: accountsById, currency: currency)
+            }
+    }
 
-            if transactions.isEmpty {
-                Text("No transactions yet.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 20)
-            } else {
-                footer
+    /// The row list, in its own bounded scroll container (so the table scrolls
+    /// independently of the dashboard) unless it's empty.
+    @ViewBuilder
+    private var rows: some View {
+        if transactions.isEmpty {
+            Text("No transactions yet.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity)
+        } else {
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, txn in
+                        row(txn)
+                            .onAppear { loadMore(reachedIndex: index) }
+                        if index != visible.count - 1 { Divider() }
+                    }
+                    footer
+                }
+                .scrollKeyboardNavigation()
             }
-        }
-        .sheet(item: $categorizing) { txn in
-            AssignCategorySheet(transaction: txn)
-        }
-        .sheet(item: $detailing) { txn in
-            TransactionDetailSheet(transaction: txn, accountsById: accountsById, currency: currency)
+            .frame(maxHeight: maxHeight)
         }
     }
 

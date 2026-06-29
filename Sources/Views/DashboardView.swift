@@ -75,6 +75,7 @@ struct DashboardView: View {
                 }
             }
             .padding(20)
+            .scrollKeyboardNavigation()
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .fileImporter(isPresented: $showingImporter,
