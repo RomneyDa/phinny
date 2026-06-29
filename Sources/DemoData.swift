@@ -113,6 +113,49 @@ enum DemoData {
         try db.replace(accounts: accounts, transactions: txns)
         try db.recordSync(at: Date())
         try generateMortgage(in: db)
+        try generateCategories(in: db, transactions: txns)
+    }
+
+    /// Seed a few categories and auto-categorize the demo transactions by their
+    /// synthetic category string. One expense is tagged manually to show the
+    /// manual-versus-auto distinction (a sparkle marks auto links in the UI).
+    private static func generateCategories(in db: AppDatabase, transactions txns: [Transaction]) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        // (display name, color, which SimpleFIN category strings map to it)
+        let defs: [(String, String, Set<String>)] = [
+            ("Groceries", "#22C55E", ["Groceries"]),
+            ("Dining", "#F77061", ["Dining"]),
+            ("Transport", "#3B82F6", ["Transport"]),
+            ("Shopping", "#A855F7", ["Shopping"]),
+            ("Housing", "#6366F1", ["Housing", "Rent"]),
+            ("Utilities", "#06B6D4", ["Utilities"]),
+            ("Subscriptions", "#F5A623", ["Subscriptions"]),
+            ("Health", "#EC4899", ["Health"]),
+        ]
+        var idByName: [String: String] = [:]
+        for (i, def) in defs.enumerated() {
+            let id = "demo-cat-\(i)"
+            idByName[def.0] = id
+            try db.saveCategory(SpendCategory(id: id, name: def.0, colorHex: def.1, createdAt: now))
+        }
+        func categoryId(for source: String?) -> String? {
+            guard let source else { return nil }
+            for def in defs where def.2.contains(source) { return idByName[def.0] }
+            return nil
+        }
+
+        var seq = 0
+        var taggedManual = false
+        for txn in txns where txn.isExpense {
+            guard let catId = categoryId(for: txn.category) else { continue }
+            // Tag the first grocery expense manually so the demo shows both kinds.
+            let manual = !taggedManual && txn.category == "Groceries"
+            if manual { taggedManual = true }
+            try db.saveExpenseCategory(ExpenseCategory(
+                id: "demo-ec-\(seq)", transactionId: txn.id, categoryId: catId,
+                startDate: nil, endDate: nil, isAuto: !manual, createdAt: now))
+            seq += 1
+        }
     }
 
     /// A demo mortgage that exercises every feature: rate change, home-value

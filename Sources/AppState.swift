@@ -31,6 +31,8 @@ final class AppState: ObservableObject {
     @Published private(set) var valuations: [HomeValuation] = []
     @Published private(set) var manualTxns: [MortgageManualTxn] = []
     @Published private(set) var paymentLinks: [MortgagePaymentLink] = []
+    @Published private(set) var categories: [SpendCategory] = []
+    @Published private(set) var expenseCategories: [ExpenseCategory] = []
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSync: Date?
     @Published var errorMessage: String?
@@ -206,6 +208,8 @@ final class AppState: ObservableObject {
         valuations = (try? database.valuations()) ?? []
         manualTxns = (try? database.manualTxns()) ?? []
         paymentLinks = (try? database.paymentLinks()) ?? []
+        categories = (try? database.categories()) ?? []
+        expenseCategories = (try? database.expenseCategories()) ?? []
     }
 
     // MARK: - Mortgages
@@ -374,6 +378,133 @@ final class AppState: ObservableObject {
                  paymentPayee: nil, paymentAmount: nil, createdAt: epoch(Date()))
     }
 
+    // MARK: - Categories
+
+    var categoriesById: [String: SpendCategory] {
+        Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+    }
+
+    /// All links attached to a transaction (any window).
+    func links(forTransaction id: String) -> [ExpenseCategory] {
+        expenseCategories.filter { $0.transactionId == id }
+    }
+
+    /// The links that actually apply to a transaction (window contains its date).
+    private func applicableLinks(for txn: Transaction) -> [ExpenseCategory] {
+        links(forTransaction: txn.id).filter { $0.applies(toPosted: txn.posted) }
+    }
+
+    /// The single category shown for a transaction. Manual wins over auto, then
+    /// the most recent link. Returns nil if nothing applies.
+    func effectiveCategory(for txn: Transaction) -> SpendCategory? {
+        let chosen = applicableLinks(for: txn).max { a, b in
+            if a.isAuto != b.isAuto { return a.isAuto && !b.isAuto } // manual ranks higher
+            return a.createdAt < b.createdAt                          // then newest
+        }
+        return chosen.flatMap { categoriesById[$0.categoryId] }
+    }
+
+    /// Every applicable category for a transaction (an expense may have several).
+    func appliedCategories(for txn: Transaction) -> [SpendCategory] {
+        applicableLinks(for: txn).compactMap { categoriesById[$0.categoryId] }
+    }
+
+    /// Label used by the spending chart: the effective category name, else the
+    /// transaction's own group label.
+    func categoryLabel(for txn: Transaction) -> String {
+        effectiveCategory(for: txn)?.name ?? txn.groupLabel
+    }
+
+    /// How many transactions currently carry at least one link to a category.
+    func usageCount(categoryId: String) -> Int {
+        Set(expenseCategories.filter { $0.categoryId == categoryId }.map { $0.transactionId }).count
+    }
+
+    @discardableResult
+    func addCategory(name: String, colorHex: String? = nil) -> SpendCategory {
+        let c = SpendCategory(id: newId(), name: name,
+                              colorHex: colorHex ?? Theme.nextCategoryColor(existing: categories.count),
+                              createdAt: epoch(Date()))
+        try? database?.saveCategory(c)
+        loadFromDatabase()
+        return c
+    }
+    func updateCategory(_ c: SpendCategory) {
+        try? database?.saveCategory(c)
+        loadFromDatabase()
+    }
+    func deleteCategory(_ id: String) {
+        try? database?.deleteCategory(id: id)   // cascades to its links
+        loadFromDatabase()
+    }
+
+    /// Simple manual tagging: make `categoryId` the transaction's category,
+    /// replacing any existing links. Pass nil to clear all categories.
+    func setCategory(_ txn: Transaction, categoryId: String?) {
+        let links: [ExpenseCategory]
+        if let categoryId {
+            links = [ExpenseCategory(id: newId(), transactionId: txn.id, categoryId: categoryId,
+                                     startDate: nil, endDate: nil, isAuto: false,
+                                     createdAt: epoch(Date()))]
+        } else {
+            links = []
+        }
+        try? database?.replaceExpenseCategories(transactionId: txn.id, with: links)
+        loadFromDatabase()
+    }
+
+    /// Add a manual link, optionally windowed, without disturbing links to other
+    /// categories. Any conflicting link (same category, overlapping window) is
+    /// replaced; manual always wins.
+    func addManualLink(transactionId: String, categoryId: String,
+                       start: Date? = nil, end: Date? = nil) {
+        let link = ExpenseCategory(
+            id: newId(), transactionId: transactionId, categoryId: categoryId,
+            startDate: start.map(epoch), endDate: end.map(epoch),
+            isAuto: false, createdAt: epoch(Date()))
+        for existing in conflicts(with: link) {
+            try? database?.deleteExpenseCategory(id: existing.id)
+        }
+        try? database?.saveExpenseCategory(link)
+        loadFromDatabase()
+    }
+
+    /// Auto-categorization entry point (for a future AI). Respects manual intent:
+    /// if the transaction already has any manual link, it is left untouched.
+    /// Otherwise the auto link replaces conflicting auto links.
+    func autoAssign(transactionId: String, categoryId: String,
+                    start: Date? = nil, end: Date? = nil) {
+        if links(forTransaction: transactionId).contains(where: { !$0.isAuto }) { return }
+        let link = ExpenseCategory(
+            id: newId(), transactionId: transactionId, categoryId: categoryId,
+            startDate: start.map(epoch), endDate: end.map(epoch),
+            isAuto: true, createdAt: epoch(Date()))
+        for existing in conflicts(with: link) where existing.isAuto {
+            try? database?.deleteExpenseCategory(id: existing.id)
+        }
+        try? database?.saveExpenseCategory(link)
+        loadFromDatabase()
+    }
+
+    func removeLink(_ id: String) {
+        try? database?.deleteExpenseCategory(id: id)
+        loadFromDatabase()
+    }
+    func clearCategories(transactionId: String) {
+        try? database?.replaceExpenseCategories(transactionId: transactionId, with: [])
+        loadFromDatabase()
+    }
+
+    /// Existing links that conflict with `candidate`: same transaction + same
+    /// category + overlapping window. (The only conflict the model recognizes.)
+    private func conflicts(with candidate: ExpenseCategory) -> [ExpenseCategory] {
+        links(forTransaction: candidate.transactionId).filter {
+            $0.id != candidate.id
+                && $0.categoryId == candidate.categoryId
+                && ExpenseCategory.windowsOverlap($0, candidate)
+        }
+    }
+
     // MARK: - Derived data for the dashboard
 
     var summary: Analytics.Summary {
@@ -383,7 +514,7 @@ final class AppState: ObservableObject {
         Analytics.monthlyFlows(transactions)
     }
     var topSpending: [Analytics.CategorySpend] {
-        Analytics.topSpending(transactions)
+        Analytics.topSpending(transactions) { [self] in categoryLabel(for: $0) }
     }
     var primaryCurrency: String { accounts.first?.currency ?? "USD" }
 }

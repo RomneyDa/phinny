@@ -71,11 +71,12 @@ enum Analytics {
 
     /// Top spending groups (category → merchant → description) within the last
     /// `days` days. Anything past `topN` is collapsed into "Other".
-    static func topSpending(_ transactions: [Transaction], days: Int = 30, topN: Int = 7) -> [CategorySpend] {
+    static func topSpending(_ transactions: [Transaction], days: Int = 30, topN: Int = 7,
+                            label: (Transaction) -> String = { $0.groupLabel }) -> [CategorySpend] {
         let cutoff = calendar.date(byAdding: .day, value: -days, to: Date()) ?? .distantPast
         var totals: [String: Double] = [:]
         for txn in transactions where txn.isExpense && txn.date >= cutoff {
-            totals[txn.groupLabel, default: 0] += -txn.amount
+            totals[label(txn), default: 0] += -txn.amount
         }
         let sorted = totals.map { CategorySpend(label: $0.key, amount: $0.value) }
             .sorted { $0.amount > $1.amount }

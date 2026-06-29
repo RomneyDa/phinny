@@ -8,6 +8,8 @@ struct TransactionsList: View {
     let currency: String
     var limit: Int = 12
 
+    @State private var categorizing: Transaction?
+
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(transactions.prefix(limit))) { txn in
@@ -22,9 +24,14 @@ struct TransactionsList: View {
                         )
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(txn.groupLabel)
-                            .font(.body)
-                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(txn.groupLabel)
+                                .font(.body)
+                                .lineLimit(1)
+                            ForEach(state.appliedCategories(for: txn)) { c in
+                                CategoryChip(category: c)
+                            }
+                        }
                         HStack(spacing: 6) {
                             Text(accountsById[txn.accountId] ?? "Account")
                             Text("·")
@@ -45,6 +52,9 @@ struct TransactionsList: View {
                 }
                 .padding(.vertical, 9)
                 .contextMenu {
+                    Menu("Category") {
+                        CategoryPickerMenu(transaction: txn) { categorizing = txn }
+                    }
                     if state.mortgages.isEmpty {
                         Text("Add a mortgage to link payments")
                     } else {
@@ -68,6 +78,9 @@ struct TransactionsList: View {
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 20)
             }
+        }
+        .sheet(item: $categorizing) { txn in
+            AssignCategorySheet(transaction: txn)
         }
     }
 }

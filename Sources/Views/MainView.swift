@@ -8,6 +8,7 @@ struct MainView: View {
 
     enum Nav: Hashable {
         case dashboard
+        case categories
         case mortgage(String)
     }
 
@@ -16,6 +17,9 @@ struct MainView: View {
             List(selection: $selection) {
                 NavigationLink(value: Nav.dashboard) {
                     Label("Dashboard", systemImage: "chart.pie.fill")
+                }
+                NavigationLink(value: Nav.categories) {
+                    Label("Categories", systemImage: "tag.fill")
                 }
                 Section("Mortgages") {
                     ForEach(state.mortgages) { m in
@@ -45,6 +49,8 @@ struct MainView: View {
         switch selection ?? .dashboard {
         case .dashboard:
             DashboardView()
+        case .categories:
+            CategoriesView()
         case .mortgage(let id):
             if let m = state.mortgages.first(where: { $0.id == id }) {
                 MortgageDetailView(mortgage: m)

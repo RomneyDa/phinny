@@ -15,6 +15,35 @@ enum Theme {
             startPoint: .topLeading, endPoint: .bottomTrailing
         )
     }
+
+    /// Palette new categories cycle through (indigo, emerald, coral, amber, etc.).
+    static let categoryPalette = [
+        "#6366F1", "#22C55E", "#F77061", "#F5A623", "#A855F7",
+        "#06B6D4", "#EC4899", "#84CC16", "#3B82F6", "#F97316",
+    ]
+
+    /// Pick the next palette color given how many categories already exist.
+    static func nextCategoryColor(existing: Int) -> String {
+        categoryPalette[existing % categoryPalette.count]
+    }
+}
+
+extension Color {
+    /// Parse a "#RRGGBB" (or "RRGGBB") hex string. Falls back to gray.
+    init(hex: String) {
+        let s = hex.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+            ? String(hex.dropFirst()) : hex
+        var rgb: UInt64 = 0
+        guard s.count == 6, Scanner(string: s).scanHexInt64(&rgb) else {
+            self = .gray
+            return
+        }
+        self = Color(
+            red: Double((rgb >> 16) & 0xFF) / 255,
+            green: Double((rgb >> 8) & 0xFF) / 255,
+            blue: Double(rgb & 0xFF) / 255
+        )
+    }
 }
 
 /// Currency + date formatting helpers shared across views.

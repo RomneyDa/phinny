@@ -118,6 +118,28 @@ final class AppDatabase {
                 t.add(column: "zillowUrl", .text)
             }
         }
+        // v5: expense categorization. Like mortgages, these tables are never
+        // touched by a sync, so manual categorizations survive. The same
+        // structure serves both manual tagging and future AI auto-categorization
+        // (distinguished only by `expense_category.isAuto`).
+        migrator.registerMigration("v5") { db in
+            try db.create(table: "category") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("colorHex", .text).notNull()
+                t.column("createdAt", .integer).notNull()
+            }
+            try db.create(table: "expense_category") { t in
+                t.primaryKey("id", .text)
+                t.column("transactionId", .text).notNull().indexed()
+                t.column("categoryId", .text).notNull()
+                    .indexed().references("category", onDelete: .cascade)
+                t.column("startDate", .integer)
+                t.column("endDate", .integer)
+                t.column("isAuto", .boolean).notNull()
+                t.column("createdAt", .integer).notNull()
+            }
+        }
         return migrator
     }
 
@@ -216,6 +238,36 @@ final class AppDatabase {
     func removePaymentLinks(mortgageId: String) throws {
         _ = try dbQueue.write { db in
             try MortgagePaymentLink.filter(Column("mortgageId") == mortgageId).deleteAll(db)
+        }
+    }
+
+    // MARK: - Categories
+
+    func categories() throws -> [SpendCategory] {
+        try dbQueue.read { db in try SpendCategory.order(Column("name")).fetchAll(db) }
+    }
+    func saveCategory(_ c: SpendCategory) throws {
+        try dbQueue.write { db in try c.save(db) }
+    }
+    func deleteCategory(id: String) throws {
+        // Cascades to expense_category via the foreign key.
+        _ = try dbQueue.write { db in try SpendCategory.deleteOne(db, key: id) }
+    }
+
+    func expenseCategories() throws -> [ExpenseCategory] {
+        try dbQueue.read { db in try ExpenseCategory.fetchAll(db) }
+    }
+    func saveExpenseCategory(_ link: ExpenseCategory) throws {
+        try dbQueue.write { db in try link.save(db) }
+    }
+    func deleteExpenseCategory(id: String) throws {
+        _ = try dbQueue.write { db in try ExpenseCategory.deleteOne(db, key: id) }
+    }
+    /// Replace all links for a transaction with the given set, atomically.
+    func replaceExpenseCategories(transactionId: String, with links: [ExpenseCategory]) throws {
+        try dbQueue.write { db in
+            try ExpenseCategory.filter(Column("transactionId") == transactionId).deleteAll(db)
+            for l in links { try l.save(db) }
         }
     }
 

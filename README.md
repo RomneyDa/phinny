@@ -12,6 +12,7 @@
 - **Syncs automatically** on launch - but only when the data is stale, to respect SimpleFIN's ~24 requests/day budget.
 - **Visualizes** income vs. spending, net cash flow, top spending, and recent transactions with native [Swift Charts](https://developer.apple.com/documentation/charts).
 - **Tracks mortgages** without logging every payment: enter the loan, rate, and down payment and Phinny computes the whole amortization, equity, and payoff. Adjust the rate and home value over time, add extra principal payments, and link a real expense as the recurring payment (with historical auto-detection).
+- **Categorizes spending** into your own categories: tag any transaction from the dashboard (or scope a tag to a date range), and the Top Spending chart groups by your categories. The data model is built for a future AI auto-categorizer, with a manual-versus-auto flag so your manual tags are never overwritten.
 - **Stores everything locally** - SQLite database in `~/.phinny`, credentials in the macOS Keychain. Nothing leaves your machine except the SimpleFIN request itself.
 
 <div align="center"><img src="docs/screenshot.png" width="760" alt="Phinny dashboard" /></div>

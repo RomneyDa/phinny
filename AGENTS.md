@@ -25,9 +25,13 @@ Sources/
                             MortgageDetection (link/detect payments),
                             ZillowScraper (offscreen WKWebView Zestimate lookup;
                             prefers a pasted homedetails URL over address search)
+  Categories/               CategoryModels (SpendCategory + ExpenseCategory link
+                            with isAuto flag and optional effective date range)
   Views/                    SwiftUI: RootView, MainView (sidebar), Dashboard, Charts,
                             OnboardingView (connect sheet),
-                            Mortgage/ (detail, editor, InteractiveHomeValueChart, AddressField)
+                            Mortgage/ (detail, editor, InteractiveHomeValueChart, AddressField),
+                            Categories/ (CategoriesView manager, CategoryChip,
+                            AssignCategorySheet)
 Resources/                  Entitlements, Assets.xcassets (procedural app icon),
                             phinny-demo.sqlite (bundled demo data), generated Info.plist
 scripts/                    run.sh, build-app.sh, build-signed-local.sh,
@@ -72,6 +76,7 @@ The `.xcodeproj` and `Resources/Info.plist` are **generated** (git-ignored). Nev
 - Dates from SimpleFIN are epoch seconds.
 - New settings → add to `Config.Sync` (YAML). New secrets → `Keychain.swift`. New stored data → a GRDB migration in `Database.swift` (append a new `registerMigration`, never edit an existing one).
 - Mortgage math source of truth: balance/equity/payoff always come from `MortgageEngine` (loan terms), never from linked payment amounts. Linked payments are display-only and feed the escrow back-calculation (actual payment − scheduled P&I). Don't let a real payment amount drive the amortization.
+- Categorization: a `SpendCategory` is global (user- or future-AI-created). An `expense_category` row links one transaction to one category, with `isAuto` (manual vs auto) and an optional effective window (`startDate`/`endDate`, both nil = always). The Swift type is `SpendCategory`, not `Category` (the bare name collides with a clang-imported C symbol). Conflict rule: two links conflict only when `transactionId` AND `categoryId` match AND their windows overlap, so an expense can hold several categories and the same expense+category can repeat across non-overlapping windows. Manual links are never overridden by auto-categorization: `AppState.autoAssign` skips any transaction that already has a manual link. Resolution for charts/chips prefers manual over auto, then newest.
 
 ## Common tasks
 
