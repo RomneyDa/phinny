@@ -45,6 +45,23 @@ final class AppState: ObservableObject {
     private var config = Config()
     private var database: AppDatabase?
 
+    // MARK: - Derived caches
+    //
+    // Rebuilt by `rebuildDerived()` at the single mutation chokepoint
+    // (`loadFromDatabase`). Views read these on every render and every page
+    // switch, so they must stay cheap O(1) lookups, never per-access rescans of
+    // the raw rows. (Recomputing them per access made navigation visibly laggy.)
+
+    /// Categories keyed by id.
+    private(set) var categoriesById: [String: SpendCategory] = [:]
+    /// Expense-category links grouped by transaction id, so per-transaction
+    /// lookups (effective category, chips, transfer test) are O(1) instead of
+    /// scanning every link on each call.
+    private var linksByTransaction: [String: [ExpenseCategory]] = [:]
+    /// Mortgages keyed by id, and the mortgage a payment transaction links to.
+    private var mortgagesById: [String: Mortgage] = [:]
+    private var mortgageIdByPaymentTxn: [String: String] = [:]
+
     var isDemo: Bool { phase == .demo }
     /// Ready with imported data but no SimpleFIN account connected. In this mode
     /// there is nothing to sync, so the dashboard hides "Sync Now".
@@ -262,6 +279,24 @@ final class AppState: ObservableObject {
         categories = (try? database.categories()) ?? []
         expenseCategories = (try? database.expenseCategories()) ?? []
         transferExclusions = Set((try? database.transferExclusions())?.map { $0.transactionId } ?? [])
+        rebuildDerived()
+    }
+
+    /// Rebuild every derived cache from the freshly loaded raw arrays. Called once
+    /// per data change (end of `loadFromDatabase`) so views never recompute these
+    /// per render. Indexes are built first; the dashboard analytics depend on them
+    /// (via `isTransfer` / `categoryLabel`), so they are computed afterwards.
+    private func rebuildDerived() {
+        categoriesById = Dictionary(categories.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        linksByTransaction = Dictionary(grouping: expenseCategories, by: { $0.transactionId })
+        mortgagesById = Dictionary(mortgages.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        mortgageIdByPaymentTxn = Dictionary(
+            paymentLinks.map { ($0.transactionId, $0.mortgageId) }, uniquingKeysWith: { a, _ in a })
+
+        spendingTransactions = transactions.filter { !isTransfer($0) }
+        summary = Analytics.summary(accounts: accounts, transactions: spendingTransactions)
+        monthlyFlows = Analytics.monthlyFlows(spendingTransactions)
+        topSpending = Analytics.topSpending(spendingTransactions) { [self] in categoryLabel(for: $0) }
     }
 
     // MARK: - Mortgages
@@ -366,8 +401,8 @@ final class AppState: ObservableObject {
 
     /// The mortgage a transaction is linked to as a payment, if any.
     func mortgage(forPayment txn: Transaction) -> Mortgage? {
-        guard let link = paymentLinks.first(where: { $0.transactionId == txn.id }) else { return nil }
-        return mortgages.first(where: { $0.id == link.mortgageId })
+        guard let mortgageId = mortgageIdByPaymentTxn[txn.id] else { return nil }
+        return mortgagesById[mortgageId]
     }
 
     /// Unlink a single transaction from being a mortgage payment. The mortgage's
@@ -462,13 +497,11 @@ final class AppState: ObservableObject {
 
     // MARK: - Categories
 
-    var categoriesById: [String: SpendCategory] {
-        Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
-    }
+    // `categoriesById` is a cache rebuilt in `rebuildDerived()` (declared above).
 
-    /// All links attached to a transaction (any window).
+    /// All links attached to a transaction (any window). O(1) via the index.
     func links(forTransaction id: String) -> [ExpenseCategory] {
-        expenseCategories.filter { $0.transactionId == id }
+        linksByTransaction[id] ?? []
     }
 
     /// The links that actually apply to a transaction (window contains its date).
@@ -674,20 +707,15 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Derived data for the dashboard
+    //
+    // Caches, not computed properties: each is O(transactions) to build and the
+    // dashboard reads all of them on every render. They are rebuilt once per data
+    // change in `rebuildDerived()`.
 
     /// Transactions that count as real income/spending (transfers removed).
-    private var spendingTransactions: [Transaction] {
-        transactions.filter { !isTransfer($0) }
-    }
-
-    var summary: Analytics.Summary {
-        Analytics.summary(accounts: accounts, transactions: spendingTransactions)
-    }
-    var monthlyFlows: [Analytics.MonthlyFlow] {
-        Analytics.monthlyFlows(spendingTransactions)
-    }
-    var topSpending: [Analytics.CategorySpend] {
-        Analytics.topSpending(spendingTransactions) { [self] in categoryLabel(for: $0) }
-    }
+    private(set) var spendingTransactions: [Transaction] = []
+    private(set) var summary = Analytics.Summary()
+    private(set) var monthlyFlows: [Analytics.MonthlyFlow] = []
+    private(set) var topSpending: [Analytics.CategorySpend] = []
     var primaryCurrency: String { accounts.first?.currency ?? "USD" }
 }
