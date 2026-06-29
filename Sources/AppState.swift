@@ -500,6 +500,21 @@ final class AppState: ObservableObject {
         loadFromDatabase()
     }
 
+    /// Toggle a manual link to `categoryId` on or off for this transaction,
+    /// leaving links to other categories untouched. This is what the multi-select
+    /// picker uses, so an expense can carry any combination of categories. Turning
+    /// a category off removes every link to it (windowed or not); use the advanced
+    /// sheet for per-window control.
+    func toggleCategory(_ txn: Transaction, categoryId: String) {
+        let existing = links(forTransaction: txn.id).filter { $0.categoryId == categoryId }
+        if existing.isEmpty {
+            addManualLink(transactionId: txn.id, categoryId: categoryId)
+        } else {
+            for link in existing { try? database?.deleteExpenseCategory(id: link.id) }
+            loadFromDatabase()
+        }
+    }
+
     /// Existing links that conflict with `candidate`: same transaction + same
     /// category + overlapping window. (The only conflict the model recognizes.)
     private func conflicts(with candidate: ExpenseCategory) -> [ExpenseCategory] {

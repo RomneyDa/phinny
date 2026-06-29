@@ -31,6 +31,7 @@ struct TransactionsList: View {
                             ForEach(state.appliedCategories(for: txn)) { c in
                                 CategoryChip(category: c)
                             }
+                            CategoryPickerButton(transaction: txn) { categorizing = txn }
                         }
                         HStack(spacing: 6) {
                             Text(accountsById[txn.accountId] ?? "Account")
