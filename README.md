@@ -6,6 +6,15 @@
 
 ---
 
+## Why I built this
+
+I wanted to see my own finances clearly and was not satisfied with what was out there:
+
+- **The pricing is backwards.** A lot of personal-finance apps run around $200 a year. SimpleFIN is $15 a year, and that one connection works with *any* app that speaks the protocol, not just this one. You pay for the bank link, not for a walled garden.
+- **The data should be local and AI-reachable.** Existing apps keep your transactions locked in their cloud. Phinny syncs everything into a plain local SQLite database, which means an AI agent on your own machine can read and reason over it directly.
+- **Transfers and mortgages are usually handled badly.** I have never liked how other apps double-count transfers between my own accounts or force me to log every mortgage payment. Phinny detects transfers automatically and computes the entire mortgage amortization from the loan terms, so the interfaces stay simple instead of getting more complicated the more you track.
+- **Awareness beats budgeting.** I have found that just clearly seeing what I earn and spend changes my behavior more than any budget envelope. Most budgeting apps feel too budget-centric. Phinny is built to *show* you your income and spending plainly, not to make you manage a budget.
+
 ## What it does
 
 - **Connect once** with a SimpleFIN setup token (or try the built-in demo).
