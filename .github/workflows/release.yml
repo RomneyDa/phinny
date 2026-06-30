@@ -1,6 +1,10 @@
 name: Release macOS app
 
 # Tag a release (e.g. `git tag v0.1.0 && git push --tags`) or run manually.
+# The build job produces the signed/notarized artifacts; the release job
+# publishes them to a GitHub Release. Keeping them separate means a failed
+# publish never forces a rebuild, and the build artifacts are always
+# downloadable from the run even when no tag triggered a release.
 on:
   push:
     tags: ["v*"]
@@ -10,7 +14,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
+    name: Build, sign, notarize
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -45,18 +50,37 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: ./scripts/build-signed-local.sh
 
-      - name: Upload artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Phinny-macos
           path: |
             dist/Phinny.dmg
             dist/Phinny.zip
+          if-no-files-found: error
 
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish a Release for tag pushes; plain workflow_dispatch runs just
+    # build the artifacts (available on the run page) without cutting a release.
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Phinny-macos
+          path: dist
+
+      - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
+          # The tag that triggered the run becomes the release.
+          generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             dist/Phinny.dmg
             dist/Phinny.zip
