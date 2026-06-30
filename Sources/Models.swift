@@ -11,6 +11,9 @@ struct Account: Codable, Identifiable, Hashable, FetchableRecord, PersistableRec
     var availableBalance: Double?
     /// Epoch seconds of the balance reading.
     var balanceDate: Int?
+    /// User chose to hide this account from the dashboard totals/charts. Set in
+    /// the SimpleFIN tab; preserved across syncs (see `AppDatabase.replace`).
+    var hidden: Bool = false
 
     static let databaseTableName = "account"
 }

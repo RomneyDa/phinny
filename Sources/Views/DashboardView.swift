@@ -8,7 +8,7 @@ struct DashboardView: View {
     @State private var showingImportInfo = false
 
     private var accountsById: [String: String] {
-        Dictionary(uniqueKeysWithValues: state.accounts.map { ($0.id, $0.name) })
+        Dictionary(uniqueKeysWithValues: state.visibleAccounts.map { ($0.id, $0.name) })
     }
 
     /// File types the statement importer accepts. OFX/QFX/QBO have no standard
@@ -68,7 +68,7 @@ struct DashboardView: View {
 
                 CardSection("Recent Transactions") {
                     TransactionsList(
-                        transactions: state.transactions,
+                        transactions: state.visibleTransactions,
                         accountsById: accountsById,
                         currency: state.primaryCurrency
                     )
@@ -131,8 +131,6 @@ struct DashboardView: View {
                     } label: {
                         Label("Import Apple Card Statement…", systemImage: "square.and.arrow.down")
                     }
-                    Divider()
-                    Button("Disconnect…", role: .destructive) { Task { await state.disconnect() } }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -183,8 +181,8 @@ struct DashboardView: View {
     }
 
     private var subtitle: String {
-        let accounts = state.accounts.count
-        let txns = state.transactions.count
+        let accounts = state.visibleAccounts.count
+        let txns = state.visibleTransactions.count
         let base = "\(accounts) account\(accounts == 1 ? "" : "s") · \(txns) transactions"
         if state.isDemo { return "Demo · " + base }
         if state.isSyncing { return base + " · syncing…" }

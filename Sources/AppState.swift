@@ -66,6 +66,8 @@ final class AppState: ObservableObject {
     /// Ready with imported data but no SimpleFIN account connected. In this mode
     /// there is nothing to sync, so the dashboard hides "Sync Now".
     var isImportOnly: Bool { phase == .ready && accessURL == nil }
+    /// A real SimpleFIN account is connected (access URL in the Keychain).
+    var isConnected: Bool { accessURL != nil }
     private var accessURL: String? { Keychain.accessURL() }
 
     // MARK: - Lifecycle
@@ -293,10 +295,26 @@ final class AppState: ObservableObject {
         mortgageIdByPaymentTxn = Dictionary(
             paymentLinks.map { ($0.transactionId, $0.mortgageId) }, uniquingKeysWith: { a, _ in a })
 
-        spendingTransactions = transactions.filter { !isTransfer($0) }
-        summary = Analytics.summary(accounts: accounts, transactions: spendingTransactions)
+        // Hidden accounts are excluded from every dashboard aggregation and from
+        // the recent-transactions list. They still appear (toggleable) in the
+        // SimpleFIN tab via the full `accounts` array.
+        hiddenAccountIds = Set(accounts.filter { $0.hidden }.map { $0.id })
+        let hidden = hiddenAccountIds
+        visibleAccounts = hidden.isEmpty ? accounts : accounts.filter { !hidden.contains($0.id) }
+        visibleTransactions = hidden.isEmpty
+            ? transactions
+            : transactions.filter { !hidden.contains($0.accountId) }
+
+        spendingTransactions = visibleTransactions.filter { !isTransfer($0) }
+        summary = Analytics.summary(accounts: visibleAccounts, transactions: spendingTransactions)
         monthlyFlows = Analytics.monthlyFlows(spendingTransactions)
         topSpending = Analytics.topSpending(spendingTransactions) { [self] in categoryLabel(for: $0) }
+    }
+
+    /// Hide or show an account on the dashboard. Persisted; survives syncs.
+    func setAccountHidden(_ accountId: String, hidden: Bool) {
+        try? database?.setAccountHidden(id: accountId, hidden: hidden)
+        loadFromDatabase()
     }
 
     // MARK: - Mortgages
@@ -712,6 +730,13 @@ final class AppState: ObservableObject {
     // dashboard reads all of them on every render. They are rebuilt once per data
     // change in `rebuildDerived()`.
 
+    /// Ids of accounts the user hid from the dashboard (derived from `accounts`).
+    private(set) var hiddenAccountIds: Set<String> = []
+    /// Accounts the user has not hidden (what the dashboard counts and totals).
+    private(set) var visibleAccounts: [Account] = []
+    /// Transactions on visible accounts (hidden-account rows removed). The recent
+    /// list renders these; transfers are still shown, only hidden accounts drop.
+    private(set) var visibleTransactions: [Transaction] = []
     /// Transactions that count as real income/spending (transfers removed).
     private(set) var spendingTransactions: [Transaction] = []
     private(set) var summary = Analytics.Summary()

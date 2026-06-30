@@ -165,15 +165,44 @@ final class AppDatabase {
                 t.add(column: "paymentAccountId", .text)
             }
         }
+        // v8: per-account hiding, first modeled as a side table. Superseded by v9
+        // (a column on `account`); kept here only so already-migrated databases
+        // stay in step with the migrator.
+        migrator.registerMigration("v8") { db in
+            try db.create(table: "account_hidden") { t in
+                t.primaryKey("accountId", .text)
+                t.column("createdAt", .integer).notNull()
+            }
+        }
+        // v9: fold account hiding into a `hidden` column on `account`. A sync
+        // upserts account rows, so `replace(...)` carries this flag forward
+        // rather than letting a fetch reset it. Migrate any v8 rows, then drop
+        // the side table.
+        migrator.registerMigration("v9") { db in
+            try db.alter(table: "account") { t in
+                t.add(column: "hidden", .boolean).notNull().defaults(to: false)
+            }
+            try db.execute(sql:
+                "UPDATE account SET hidden = 1 WHERE id IN (SELECT accountId FROM account_hidden)")
+            try db.drop(table: "account_hidden")
+        }
         return migrator
     }
 
     // MARK: - Writes
 
     /// Upsert the synced accounts + transactions in a single transaction.
+    ///
+    /// A sync supplies freshly fetched accounts (always `hidden = false`), so we
+    /// carry the user's existing "hidden" choice forward before saving - a sync
+    /// must never un-hide an account the user hid.
     func replace(accounts: [Account], transactions: [Transaction]) throws {
         try dbQueue.write { db in
-            for account in accounts { try account.save(db) }
+            let hidden = try Set(String.fetchAll(db, sql: "SELECT id FROM account WHERE hidden"))
+            for var account in accounts {
+                account.hidden = hidden.contains(account.id)
+                try account.save(db)
+            }
             for txn in transactions { try txn.save(db) }
         }
     }
@@ -318,6 +347,16 @@ final class AppDatabase {
     }
     func deleteTransferExclusion(transactionId: String) throws {
         _ = try dbQueue.write { db in try TransferExclusion.deleteOne(db, key: transactionId) }
+    }
+
+    // MARK: - Account hiding
+
+    /// Hide or show an account on the dashboard. Persisted on the `account` row
+    /// and preserved across syncs (see `replace`).
+    func setAccountHidden(id: String, hidden: Bool) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE account SET hidden = ? WHERE id = ?", arguments: [hidden, id])
+        }
     }
 
     // MARK: - Meta helpers
