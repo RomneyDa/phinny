@@ -66,6 +66,20 @@ The `.xcodeproj` and `Resources/Info.plist` are **generated** (git-ignored). Nev
 
 > **XcodeGen gotcha:** there is no separate `resources:` target key (it is silently ignored). List resources (`.xcassets`, `.sqlite`, etc.) under `sources:` - XcodeGen auto-categorizes them into the Copy Bundle Resources phase by file type.
 
+Requirements: macOS 14+, Xcode 26+, and [XcodeGen](https://github.com/yonsson/XcodeGen) (`brew install xcodegen`). `swift scripts/generate-icon.swift` regenerates the procedurally-drawn app icon.
+
+### Testing with real data
+
+To point a dev build at your real account without pasting a token through the UI each time, copy `.env.example` to `.env` and set your token:
+
+```bash
+cp .env.example .env
+echo 'SIMPLEFIN_TOKEN=your-setup-token' >> .env
+./scripts/run.sh    # Debug build auto-connects on first launch (one real sync)
+```
+
+The token is single-use: after the first connect the access URL is stored in your Keychain and `.env` is ignored. `run.sh` launches the binary directly (not via `open`) so the variable reaches the app. Respect the ~24 syncs/day budget (see Hard rule 1).
+
 ## Hard rules
 
 1. **Respect the SimpleFIN budget (~24 requests/day).** Do NOT add code paths that sync on a timer, on every launch, or in a loop. Auto-sync is gated by `AppState.shouldAutoSync` (stale-only). When testing, use **demo mode** (the default, bundled sample data, no network) - never spam a real token. Aim for 1-2 real syncs, then work against the cached SQLite data.
@@ -96,3 +110,31 @@ The `.xcodeproj` and `Resources/Info.plist` are **generated** (git-ignored). Nev
 ## Verifying changes
 
 `./scripts/build-app.sh` must succeed with zero warnings. Launch (`./scripts/run.sh`) and confirm demo data renders, and that the Connect sheet opens, before committing.
+
+## Release & signing
+
+Local signed/notarized build (needs `.env.signing.local`, see `.env.signing.local.example`):
+
+```bash
+cp .env.signing.local.example .env.signing.local   # fill in Apple credentials
+./scripts/build-signed-local.sh                     # -> dist/Phinny.dmg + Phinny.zip
+```
+
+CI builds, signs, notarizes, and attaches a DMG to a GitHub Release on any `v*` tag (`.github/workflows/release.yml`). Required repo secrets:
+
+| Secret | Meaning |
+|---|---|
+| `MAC_CSC_LINK` | base64 of the Developer ID Application `.p12` |
+| `MAC_CSC_KEY_PASSWORD` | password for that `.p12` |
+| `DEVELOPER_ID_APPLICATION` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_ID` | Apple ID email |
+| `APPLE_TEAM_ID` | Apple Developer team ID |
+| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password for notarization |
+
+```bash
+git tag v0.1.0 && git push --tags    # triggers the release workflow
+```
+
+## Docs site
+
+A self-contained single-page site lives in `docs/` (plain HTML/CSS, no build step). It is published at `dallinromney.com/phinny` by the gateway site (`dr-site-nextjs`), which fetches `docs/` from this repo's `main` at build time (`scripts/fetch-phinny-docs.mjs` -> `public/phinny/`) and serves it as static files. So a push to `main` here, followed by a redeploy of `dr-site-nextjs`, ships the docs. The asset references in `index.html` are absolute (`/phinny/...`) precisely so they resolve under that path; keep them that way.

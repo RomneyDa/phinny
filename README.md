@@ -109,71 +109,9 @@ SimpleFIN allows roughly **24 requests per day**. Phinny is careful with them:
 
 While developing, just use **demo mode** (the default), which reads bundled sample data and never touches your real account's budget.
 
-## Development
+## Building & contributing
 
-Requirements: macOS 14+, Xcode 26+, and [XcodeGen](https://github.com/yonsson/XcodeGen) (`brew install xcodegen`).
-
-```bash
-# Build + run for development (demo data unless a token is set, see below)
-./scripts/run.sh
-
-# Build a dev-signed .app without launching
-./scripts/build-app.sh && open dist/Phinny.app
-
-# Regenerate the procedurally-drawn app icon
-swift scripts/generate-icon.swift
-
-# Regenerate the bundled demo database
-./scripts/generate-demo-db.sh
-
-# Open in Xcode to iterate
-xcodegen generate && open Phinny.xcodeproj
-```
-
-`Phinny.xcodeproj` and `Resources/Info.plist` are generated and git-ignored - edit `project.yml`, not the generated files.
-
-### Testing with real data
-
-To point a dev build at your real account without pasting a token through the UI each time, copy `.env.example` to `.env` and set your token:
-
-```bash
-cp .env.example .env
-echo 'SIMPLEFIN_TOKEN=your-setup-token' >> .env
-./scripts/run.sh    # Debug build auto-connects on first launch (one real sync)
-```
-
-The token is single-use: after the first connect the access URL is stored in your Keychain and `.env` is ignored. `run.sh` launches the binary directly (not via `open`) so the variable reaches the app. Be mindful of the ~24 syncs/day budget.
-
-See [`AGENTS.md`](AGENTS.md) for conventions and a map for coding agents.
-
-## Release & signing
-
-Local signed/notarized build (needs `.env.signing.local`, see `.env.signing.local.example`):
-
-```bash
-cp .env.signing.local.example .env.signing.local   # fill in Apple credentials
-./scripts/build-signed-local.sh                     # → dist/Phinny.dmg + Phinny.zip
-```
-
-CI builds, signs, notarizes, and attaches a DMG to a GitHub Release on any `v*` tag
-(`.github/workflows/release.yml`). Required repo secrets:
-
-| Secret | Meaning |
-|---|---|
-| `MAC_CSC_LINK` | base64 of the Developer ID Application `.p12` |
-| `MAC_CSC_KEY_PASSWORD` | password for that `.p12` |
-| `DEVELOPER_ID_APPLICATION` | e.g. `Developer ID Application: Name (TEAMID)` |
-| `APPLE_ID` | Apple ID email |
-| `APPLE_TEAM_ID` | Apple Developer team ID |
-| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password for notarization |
-
-```bash
-git tag v0.1.0 && git push --tags    # triggers the release workflow
-```
-
-## Docs site
-
-A self-contained single-page site lives in [`docs/`](docs/index.html) - plain HTML/CSS, no build step. Host it anywhere static, or proxy it at `dallinromney.com/phinny`.
+Build and run instructions, release and signing, the docs site, and the conventions and architecture map for coding agents all live in [`AGENTS.md`](AGENTS.md).
 
 ## License
 
