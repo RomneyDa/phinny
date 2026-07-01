@@ -45,7 +45,7 @@ struct TransactionsList: View {
                 .frame(maxWidth: .infinity)
         } else {
             ScrollView {
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, txn in
                         row(txn)
                             .onAppear { loadMore(reachedIndex: index) }

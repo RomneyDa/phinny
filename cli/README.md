@@ -12,6 +12,33 @@ to stderr and exit non-zero.
 The macOS app is a thin wrapper: it launches `phinny serve --stdio` and talks to
 it over a pipe. Agents can do the same, or just shell out to one-shot commands.
 
+## Install
+
+With the Go toolchain (Go has no separate binary registry; this is served by the
+Go module proxy straight from the public repo):
+
+```bash
+go install github.com/RomneyDa/phinny/cli/cmd/phinny@latest
+```
+
+That drops a `phinny` binary in `$(go env GOBIN)` (or `$(go env GOPATH)/bin`); put
+that on your `PATH`. Verify with a safe, no-network demo run:
+
+```bash
+phinny --demo --demo-source /path/to/phinny-demo.sqlite status
+```
+
+Pin a version once `cli/vX.Y.Z` tags exist (the module lives in the `cli/`
+subdirectory, so its tags are prefixed): `...@cli/v0.1.0`.
+
+Requirements: macOS (Keychain access uses `/usr/bin/security`; Zillow lookups
+need Google Chrome). It builds and runs on other platforms, but those two
+features are macOS-oriented. If you already have the macOS app, its bundled
+engine is at `Phinny.app/Contents/Resources/phinny`.
+
+Agents: install the [Phinny CLI skill](../skills/phinny-cli/SKILL.md) for a
+task-oriented guide to this surface.
+
 ## Build
 
 ```bash

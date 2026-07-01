@@ -1,7 +1,7 @@
 <div align="center">
   <img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_256.png" width="128" alt="Phinny icon" />
   <h1>Phinny</h1>
-  <p><b>An unofficial <a href="https://simplefin.org">SimpleFIN</a> viewer for macOS.</b><br/>Syncs your bank data and shows your income &amp; spending in beautiful native charts.</p>
+  <p><b>An unofficial <a href="https://simplefin.org">SimpleFIN</a> finance tool: a native macOS app <i>and</i> a headless CLI.</b><br/>Syncs your bank data and shows your income &amp; spending in beautiful native charts, backed by a Go engine any agent can drive.</p>
 </div>
 
 ---
@@ -27,6 +27,22 @@ I wanted to see my own finances clearly, and nothing out there fit:
 - **Keeps everything local**: SQLite in `~/.phinny`, credentials in the macOS Keychain. Nothing leaves your machine but the SimpleFIN request itself.
 
 <div align="center"><img src="docs/screenshot.png" width="760" alt="Phinny dashboard" /></div>
+
+## App or CLI, same engine
+
+Phinny is two things over one engine and one local database (`~/.phinny/phinny.sqlite`):
+
+- **The macOS app** - the native SwiftUI dashboard above.
+- **The `phinny` CLI** - the same engine, headless. Every feature (sync, categorize, transfers, Apple Card import, mortgage math, Zillow) is a subcommand or JSON-RPC method, so an agent or a script can drive your finances directly. The app is a thin wrapper that launches `phinny serve --stdio` and talks to it over a pipe.
+
+Install the CLI with Go:
+
+```bash
+go install github.com/RomneyDa/phinny/cli/cmd/phinny@latest
+phinny --demo --demo-source Resources/phinny-demo.sqlite status   # safe demo, no network
+```
+
+Full command reference: [`cli/README.md`](cli/README.md). Agents can install the [Phinny CLI skill](skills/phinny-cli/SKILL.md) (Agent Skills format) to learn the surface.
 
 ---
 
