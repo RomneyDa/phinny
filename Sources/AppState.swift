@@ -1,27 +1,26 @@
 import Foundation
 import SwiftUI
 
-/// The single source of truth for the UI. Owns the config + database, runs
-/// syncs, and publishes the data the views render.
+/// The single source of truth for the UI. In the wrapper architecture this is a
+/// thin client over the bundled `phinny` Go engine (see `PhinnyDaemon`): it
+/// launches `phinny serve --stdio`, loads a full snapshot after every change,
+/// and publishes what the views render. All persistence, syncing, importing,
+/// categorization, transfer/mortgage logic, and Zillow lookups run in the engine.
 ///
-/// Two modes:
-///   • demo      - no account connected. Reads the bundled `phinny-demo.sqlite`
-///                 sample data. No network calls at all.
-///   • connected - a SimpleFIN access URL is in the Keychain. Reads/writes the
-///                 real `~/.phinny/phinny.sqlite` and syncs.
-///
-/// Sync policy (protects the provider's ~24 requests/day budget): on launch we
-/// auto-sync only if there's no data yet or the last sync is older than
-/// `config.sync.minIntervalHours`. "Sync Now" is always available for a manual
-/// refresh.
+/// Reads are local (over the last snapshot); writes go to the engine and then
+/// reload. Writes are serialized through `writeChain` so ordering is preserved
+/// (e.g. create-category-then-tag-with-it).
 @MainActor
 final class AppState: ObservableObject {
 
     enum Phase: Equatable {
         case loading
-        case demo       // showing bundled sample data
-        case ready      // connected to a real account
+        case demo
+        case ready
     }
+
+    /// Suggested download for the Zillow peer dependency.
+    static let chromeInstallURL = URL(string: "https://www.google.com/chrome/")!
 
     @Published private(set) var phase: Phase = .loading
     @Published private(set) var accounts: [Account] = []
@@ -33,261 +32,113 @@ final class AppState: ObservableObject {
     @Published private(set) var paymentLinks: [MortgagePaymentLink] = []
     @Published private(set) var categories: [SpendCategory] = []
     @Published private(set) var expenseCategories: [ExpenseCategory] = []
-    /// Transaction ids the user explicitly marked "not a transfer".
     @Published private(set) var transferExclusions: Set<String> = []
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSync: Date?
     @Published var errorMessage: String?
-    /// Transient result of the last statement import (e.g. "Imported 47...").
     @Published var importMessage: String?
     @Published var showingConnectSheet = false
+    /// Whether a Chromium browser (the Zillow peer dependency) is installed.
+    @Published private(set) var chromeAvailable = true
 
-    private var config = Config()
-    private var database: AppDatabase?
+    private var daemon: PhinnyDaemon?
+    private var mode = "loading"
+    private var connectedFlag = false
+    private var minIntervalHours = 6
 
-    // MARK: - Derived caches
-    //
-    // Rebuilt by `rebuildDerived()` at the single mutation chokepoint
-    // (`loadFromDatabase`). Views read these on every render and every page
-    // switch, so they must stay cheap O(1) lookups, never per-access rescans of
-    // the raw rows. (Recomputing them per access made navigation visibly laggy.)
-
-    /// Categories keyed by id.
+    // Derived caches (rebuilt once per snapshot in `apply`).
     private(set) var categoriesById: [String: SpendCategory] = [:]
-    /// Expense-category links grouped by transaction id, so per-transaction
-    /// lookups (effective category, chips, transfer test) are O(1) instead of
-    /// scanning every link on each call.
     private var linksByTransaction: [String: [ExpenseCategory]] = [:]
-    /// Mortgages keyed by id, and the mortgage a payment transaction links to.
     private var mortgagesById: [String: Mortgage] = [:]
     private var mortgageIdByPaymentTxn: [String: String] = [:]
+    private var mortgageSummaries: [String: MortgageEngine.Summary] = [:]
+    private var mortgageSchedules: [String: [MortgageEngine.Point]] = [:]
 
     var isDemo: Bool { phase == .demo }
-    /// Ready with imported data but no SimpleFIN account connected. In this mode
-    /// there is nothing to sync, so the dashboard hides "Sync Now".
-    var isImportOnly: Bool { phase == .ready && accessURL == nil }
-    /// A real SimpleFIN account is connected (access URL in the Keychain).
-    var isConnected: Bool { accessURL != nil }
-    private var accessURL: String? { Keychain.accessURL() }
+    var isImportOnly: Bool { mode == "import-only" }
+    var isConnected: Bool { connectedFlag }
 
     // MARK: - Lifecycle
 
     func bootstrap() async {
-        config = ConfigStore.load()
-        // Materialize config.yaml on first run so settings are discoverable/editable.
-        if !FileManager.default.fileExists(atPath: Paths.configFile.path) {
-            try? ConfigStore.save(config)
-        }
-
-        // Dev tool: probe a Zillow address from the CLI and exit.
-        #if DEBUG
-        if let addr = ProcessInfo.processInfo.environment["PHINNY_ZILLOW_TEST"] {
-            let scraper = ZillowScraper()
-            do {
-                let v = try await scraper.fetchZestimate(address: addr)
-                print("ZILLOW_RESULT|\(addr)|\(Int(v))|\(scraper.lastURL)|\(scraper.lastTitle)")
-            } catch {
-                print("ZILLOW_ERROR|\(addr)|\(error.localizedDescription)|\(scraper.lastURL)|\(scraper.lastTitle)")
-            }
-            fflush(stdout)
-            exit(0)
-        }
-        #endif
-
-        // Dev convenience: force demo mode regardless of any connected account
-        // (for testing/screenshots). Does not touch the real database or Keychain.
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["PHINNY_FORCE_DEMO"] == "1" {
-            enterDemoMode()
+        let env = ProcessInfo.processInfo.environment
+        let forceDemo = env["PHINNY_FORCE_DEMO"] == "1"
+        do {
+            daemon = try PhinnyDaemon(forceDemo: forceDemo)
+        } catch {
+            errorMessage = error.localizedDescription
+            phase = .demo
             return
         }
-        #endif
 
-        // Dev convenience: auto-connect from a SIMPLEFIN_TOKEN in .env (Debug only).
-        // Run via ./scripts/run.sh so the variable reaches the app.
+        await load()
+
+        // Dev convenience: auto-connect from a SIMPLEFIN_TOKEN in .env (Debug).
         #if DEBUG
-        if !Keychain.hasAccessURL,
-           let token = ProcessInfo.processInfo.environment["SIMPLEFIN_TOKEN"]?
-               .trimmingCharacters(in: .whitespacesAndNewlines),
+        if !isConnected,
+           let token = env["SIMPLEFIN_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !token.isEmpty {
             await connect(setupToken: token)
             return
         }
         #endif
 
-        // Connected to SimpleFIN -> open + auto-sync the real DB. If there's no
-        // token but a real DB already exists (e.g. Apple Card statements were
-        // imported), reopen it in import-only mode (no sync). Otherwise demo.
-        if Keychain.hasAccessURL {
-            await enterConnectedMode(autoSync: true)
-        } else if FileManager.default.fileExists(atPath: Paths.databaseFile.path),
-                  let db = try? AppDatabase(path: Paths.databaseFile),
-                  db.accountExists(id: StatementImporter.accountId) {
-            await enterConnectedMode(autoSync: false)
-        } else {
-            enterDemoMode()
+        // Stale-only auto-sync (protects the provider's ~24 requests/day budget).
+        if isConnected && shouldAutoSync {
+            await sync()
         }
     }
 
-    // MARK: - Modes
-
-    private func enterConnectedMode(autoSync: Bool) async {
-        do {
-            let db = try AppDatabase(path: Paths.databaseFile)
-            database = db
-            lastSync = db.lastSync()
-            loadFromDatabase()
-            phase = .ready
-            if autoSync && shouldAutoSync { await sync() }
-        } catch {
-            errorMessage = "Could not open the database: \(error.localizedDescription)"
-            enterDemoMode()
-        }
-    }
-
-    private func enterDemoMode() {
-        lastSync = nil
-        do {
-            let url = try prepareDemoDatabase()
-            database = try AppDatabase(path: url)
-            loadFromDatabase()
-        } catch {
-            accounts = []
-            transactions = []
-            database = nil
-        }
-        phase = .demo
-    }
-
-    /// Copy the bundled demo database to a writable location (overwriting any
-    /// previous copy so it stays fresh) and return its URL.
-    private func prepareDemoDatabase() throws -> URL {
-        guard let bundled = Bundle.main.url(forResource: "phinny-demo", withExtension: "sqlite") else {
-            throw NSError(domain: "Phinny", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Bundled demo database is missing."])
-        }
-        try Paths.ensureConfigDir()
-        let fm = FileManager.default
-        for suffix in ["", "-wal", "-shm"] {
-            try? fm.removeItem(at: URL(fileURLWithPath: Paths.demoDatabaseFile.path + suffix))
-        }
-        try fm.copyItem(at: bundled, to: Paths.demoDatabaseFile)
-        return Paths.demoDatabaseFile
-    }
+    func shutdown() { daemon?.shutdown() }
 
     private var shouldAutoSync: Bool {
         if transactions.isEmpty { return true }
         guard let last = lastSync else { return true }
-        let interval = TimeInterval(config.sync.minIntervalHours * 3600)
-        return Date().timeIntervalSince(last) > interval
+        return Date().timeIntervalSince(last) > TimeInterval(minIntervalHours * 3600)
     }
 
-    // MARK: - Connect / disconnect
+    // MARK: - Snapshot load
 
-    /// Claim a setup token, persist the resulting access URL, then sync.
-    func connect(setupToken: String) async {
-        errorMessage = nil
-        isSyncing = true
-        defer { isSyncing = false }
+    /// Pull the full snapshot from the engine and republish.
+    private func load() async {
+        guard let daemon else { return }
         do {
-            let url = try await SimpleFINClient.claim(setupToken: setupToken)
-            guard Keychain.setAccessURL(url) else {
-                errorMessage = "Could not save credentials to the Keychain."
-                return
-            }
-            showingConnectSheet = false
-            await enterConnectedMode(autoSync: false)
-            await sync(force: true)
+            let state = try await daemon.decode(DaemonState.self, "state")
+            apply(state)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
         }
     }
 
-    /// Forget the SimpleFIN connection. If Apple Card statements were imported,
-    /// keep that data (import-only mode); otherwise fall back to demo data.
-    func disconnect() async {
-        Keychain.deleteAccessURL()
-        errorMessage = nil
-        if let db = try? AppDatabase(path: Paths.databaseFile),
-           db.accountExists(id: StatementImporter.accountId) {
-            await enterConnectedMode(autoSync: false)
-        } else {
-            enterDemoMode()
-        }
-    }
+    private func apply(_ s: DaemonState) {
+        mode = s.mode
+        connectedFlag = s.connected
+        minIntervalHours = max(1, s.config.sync.minIntervalHours)
+        chromeAvailable = s.chromeAvailable
+        primaryCurrency = s.primaryCurrency.isEmpty ? "USD" : s.primaryCurrency
+        lastSync = s.lastSync.map { Date(timeIntervalSince1970: TimeInterval($0)) }
 
-    // MARK: - Statement import (Apple Card)
+        accounts = s.accounts
+        transactions = s.transactions
+        categories = s.categories
+        expenseCategories = s.expenseCategories
+        transferExclusions = Set(s.transferExclusions.map { $0.transactionId })
+        mortgages = s.mortgages
+        rateChanges = s.rateChanges
+        valuations = s.valuations
+        manualTxns = s.manualTxns
+        paymentLinks = s.paymentLinks
 
-    /// Import an Apple Card statement file (CSV / OFX / QFX / QBO) exported from
-    /// the iPhone Wallet app. Writes through the same upsert path as sync, so
-    /// re-importing an overlapping month is idempotent. Switches out of demo mode
-    /// into the real (import-only) database on first import.
-    func importStatement(from url: URL) async {
-        errorMessage = nil
-        importMessage = nil
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let data = try Data(contentsOf: url)
-            let result = try StatementImporter.parse(data: data, filename: url.lastPathComponent)
+        summary = s.dashboard.summary
+        monthlyFlows = s.dashboard.monthlyFlows
+        topSpending = s.dashboard.topSpending
+        mortgageSummaries = s.mortgageSummaries
+        mortgageSchedules = s.mortgageSchedules
 
-            // Make sure we write to the real DB, never the demo copy.
-            if database == nil || isDemo {
-                database = try AppDatabase(path: Paths.databaseFile)
-                phase = .ready
-            }
-            try database?.replace(accounts: result.accounts, transactions: result.transactions)
-            loadFromDatabase()
-            autoDetectTransfers()
-            let n = result.transactions.count
-            importMessage = "Imported \(n) Apple Card transaction\(n == 1 ? "" : "s")."
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    // MARK: - Sync
-
-    func sync(force: Bool = false) async {
-        guard let database, let accessURL, !isSyncing || force else { return }
-        isSyncing = true
-        errorMessage = nil
-        defer { isSyncing = false }
-        do {
-            let since = Calendar.current.date(
-                byAdding: .day, value: -config.sync.historyDays, to: Date()
-            ) ?? Date(timeIntervalSince1970: 0)
-            let result = try await SimpleFINClient.fetchAccounts(accessURL: accessURL, since: since)
-            try database.replace(accounts: result.accounts, transactions: result.transactions)
-            let now = Date()
-            try database.recordSync(at: now)
-            lastSync = now
-            loadFromDatabase()
-            autoDetectTransfers()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func loadFromDatabase() {
-        guard let database else { return }
-        accounts = (try? database.accounts()) ?? []
-        transactions = (try? database.transactions()) ?? []
-        mortgages = (try? database.mortgages()) ?? []
-        rateChanges = (try? database.rateChanges()) ?? []
-        valuations = (try? database.valuations()) ?? []
-        manualTxns = (try? database.manualTxns()) ?? []
-        paymentLinks = (try? database.paymentLinks()) ?? []
-        categories = (try? database.categories()) ?? []
-        expenseCategories = (try? database.expenseCategories()) ?? []
-        transferExclusions = Set((try? database.transferExclusions())?.map { $0.transactionId } ?? [])
         rebuildDerived()
+        phase = (mode == "demo") ? .demo : .ready
     }
 
-    /// Rebuild every derived cache from the freshly loaded raw arrays. Called once
-    /// per data change (end of `loadFromDatabase`) so views never recompute these
-    /// per render. Indexes are built first; the dashboard analytics depend on them
-    /// (via `isTransfer` / `categoryLabel`), so they are computed afterwards.
     private func rebuildDerived() {
         categoriesById = Dictionary(categories.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         linksByTransaction = Dictionary(grouping: expenseCategories, by: { $0.transactionId })
@@ -295,35 +146,120 @@ final class AppState: ObservableObject {
         mortgageIdByPaymentTxn = Dictionary(
             paymentLinks.map { ($0.transactionId, $0.mortgageId) }, uniquingKeysWith: { a, _ in a })
 
-        // Hidden accounts are excluded from every dashboard aggregation and from
-        // the recent-transactions list. They still appear (toggleable) in the
-        // SimpleFIN tab via the full `accounts` array.
         hiddenAccountIds = Set(accounts.filter { $0.hidden }.map { $0.id })
         let hidden = hiddenAccountIds
         visibleAccounts = hidden.isEmpty ? accounts : accounts.filter { !hidden.contains($0.id) }
         visibleTransactions = hidden.isEmpty
             ? transactions
             : transactions.filter { !hidden.contains($0.accountId) }
-
-        spendingTransactions = visibleTransactions.filter { !isTransfer($0) }
-        summary = Analytics.summary(accounts: visibleAccounts, transactions: spendingTransactions)
-        monthlyFlows = Analytics.monthlyFlows(spendingTransactions)
-        topSpending = Analytics.topSpending(spendingTransactions) { [self] in categoryLabel(for: $0) }
     }
 
-    /// Hide or show an account on the dashboard. Persisted; survives syncs.
+    // MARK: - Write pipeline (ordered, fire-and-forget)
+
+    private var writeChain = Task<Void, Never> {}
+
+    private func enqueue(_ op: @escaping () async -> Void) {
+        let prev = writeChain
+        writeChain = Task { @MainActor in
+            _ = await prev.value
+            await op()
+        }
+    }
+
+    private func mutate(_ method: String, _ params: [String: Any] = [:]) {
+        // Serialize to Sendable Data on the main actor before crossing into the
+        // write pipeline (a [String: Any] is not Sendable).
+        let data = params.isEmpty ? nil : try? JSONSerialization.data(withJSONObject: params)
+        runWrite(method, data)
+    }
+
+    private func mutateEncodable<P: Encodable>(_ method: String, _ params: P) {
+        let data = try? JSONEncoder().encode(params)
+        runWrite(method, data)
+    }
+
+    private func runWrite(_ method: String, _ paramsData: Data?) {
+        enqueue { [weak self] in
+            guard let self, let d = self.daemon else { return }
+            do {
+                _ = try await d.send(method, raw: paramsData)
+                await self.load()
+            } catch {
+                self.errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+            }
+        }
+    }
+
+    // MARK: - Connect / disconnect / sync / import
+
+    func connect(setupToken: String) async {
+        errorMessage = nil
+        isSyncing = true
+        defer { isSyncing = false }
+        do {
+            _ = try await daemon?.send("connect", ["token": setupToken])
+            showingConnectSheet = false
+            await load()
+        } catch {
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+        }
+    }
+
+    func disconnect() async {
+        errorMessage = nil
+        do {
+            _ = try await daemon?.send("disconnect")
+            await load()
+        } catch {
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+        }
+    }
+
+    func sync(force: Bool = false) async {
+        guard isConnected else { return }
+        isSyncing = true
+        errorMessage = nil
+        defer { isSyncing = false }
+        do {
+            _ = try await daemon?.send("sync", ["force": force])
+            await load()
+        } catch {
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+        }
+    }
+
+    func importStatement(from url: URL) async {
+        errorMessage = nil
+        importMessage = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            let resp = try await daemon?.send("import", [
+                "data_base64": data.base64EncodedString(),
+                "filename": url.lastPathComponent,
+            ])
+            if let resp, let r = try? JSONDecoder().decode(ImportReply.self, from: resp) {
+                importMessage = r.message
+            }
+            await load()
+        } catch {
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+        }
+    }
+
+    private struct ImportReply: Decodable { let imported: Int; let message: String }
+
     func setAccountHidden(_ accountId: String, hidden: Bool) {
-        try? database?.setAccountHidden(id: accountId, hidden: hidden)
-        loadFromDatabase()
+        mutate("accounts.hide", ["id": accountId, "hidden": hidden])
     }
 
-    // MARK: - Mortgages
+    // MARK: - Mortgage reads
 
     func rateChanges(for id: String) -> [MortgageRateChange] {
         rateChanges.filter { $0.mortgageId == id }
     }
-    /// A valuation being dragged on the chart. Merged into `valuations(for:)`
-    /// so the whole detail view updates live without writing to disk each frame.
+
     @Published var liveValuation: HomeValuation?
 
     func valuations(for id: String) -> [HomeValuation] {
@@ -334,20 +270,8 @@ final class AppState: ObservableObject {
         }
         return vs.sorted { $0.date < $1.date }
     }
-
     func setLiveValuation(_ v: HomeValuation?) { liveValuation = v }
 
-    /// Persist the dragged valuation and clear the live override.
-    func commitValuation(_ v: HomeValuation) {
-        liveValuation = nil
-        try? database?.saveValuation(v)
-        loadFromDatabase()
-    }
-
-    func updateValuation(_ v: HomeValuation) {
-        try? database?.saveValuation(v)
-        loadFromDatabase()
-    }
     func manualTxns(for id: String) -> [MortgageManualTxn] {
         manualTxns.filter { $0.mortgageId == id }
     }
@@ -359,81 +283,20 @@ final class AppState: ObservableObject {
         return transactions.filter { ids.contains($0.id) }
     }
 
+    /// Cached engine-computed summary (as of now). `asOf` is accepted for source
+    /// compatibility; the engine computes as of the current time.
     func summary(for m: Mortgage, asOf now: Date = Date()) -> MortgageEngine.Summary {
-        MortgageEngine.summary(for: m, rateChanges: rateChanges(for: m.id),
-                               extraPayments: manualTxns(for: m.id),
-                               valuations: valuations(for: m.id), asOf: now)
+        mortgageSummaries[m.id] ?? MortgageEngine.Summary()
     }
     func schedule(for m: Mortgage) -> [MortgageEngine.Point] {
-        MortgageEngine.schedule(for: m, rateChanges: rateChanges(for: m.id),
-                                extraPayments: manualTxns(for: m.id),
-                                valuations: valuations(for: m.id))
+        mortgageSchedules[m.id] ?? []
     }
 
-    private func epoch(_ d: Date) -> Int { Int(d.timeIntervalSince1970) }
-    private func newId() -> String { UUID().uuidString }
-
-    @discardableResult
-    func upsertMortgage(_ m: Mortgage) -> Mortgage {
-        try? database?.saveMortgage(m)
-        loadFromDatabase()
-        return m
-    }
-    func deleteMortgage(_ id: String) {
-        try? database?.deleteMortgage(id: id)
-        loadFromDatabase()
-    }
-    func addRateChange(mortgageId: String, date: Date, annualRate: Double) {
-        try? database?.saveRateChange(MortgageRateChange(
-            id: newId(), mortgageId: mortgageId, effectiveDate: epoch(date), annualRate: annualRate))
-        loadFromDatabase()
-    }
-    func addValuation(mortgageId: String, date: Date, value: Double, source: String? = nil) {
-        try? database?.saveValuation(HomeValuation(
-            id: newId(), mortgageId: mortgageId, date: epoch(date), value: value, source: source))
-        loadFromDatabase()
-    }
-    func addManualTxn(mortgageId: String, date: Date, amount: Double, note: String?) {
-        try? database?.saveManualTxn(MortgageManualTxn(
-            id: newId(), mortgageId: mortgageId, date: epoch(date), amount: amount, note: note))
-        loadFromDatabase()
-    }
-    func deleteMortgageChild(table: String, id: String) {
-        try? database?.deleteMortgageChild(table: table, id: id)
-        loadFromDatabase()
-    }
-
-    /// Mark a synced transaction as this mortgage's payment, then auto-link every
-    /// other expense on the same account with the same title. Returns the total
-    /// number of linked transactions (so the UI can confirm the auto-detection).
-    @discardableResult
-    func markAsPayment(_ txn: Transaction, mortgageId: String) -> Int {
-        guard var m = mortgages.first(where: { $0.id == mortgageId }) else { return 0 }
-        m.paymentPayee = txn.payee ?? txn.descriptionText
-        m.paymentAmount = txn.amount
-        m.paymentAccountId = txn.accountId
-        try? database?.saveMortgage(m)
-        relinkPayments(for: m)
-        return linkedTransactionIds(for: mortgageId).count
-    }
-
-    /// The mortgage a transaction is linked to as a payment, if any.
     func mortgage(forPayment txn: Transaction) -> Mortgage? {
-        guard let mortgageId = mortgageIdByPaymentTxn[txn.id] else { return nil }
-        return mortgagesById[mortgageId]
+        guard let id = mortgageIdByPaymentTxn[txn.id] else { return nil }
+        return mortgagesById[id]
     }
 
-    /// Unlink a single transaction from being a mortgage payment. The mortgage's
-    /// payment signature is left intact, so other matches stay linked.
-    func unlinkPayment(_ txn: Transaction) {
-        try? database?.removePaymentLink(transactionId: txn.id)
-        loadFromDatabase()
-    }
-
-    /// Transactions that share this one's account and title (normalized
-    /// payee/description), including itself, newest first. This is the same
-    /// account + title grouping mortgage linking uses, so it doubles as a preview
-    /// of what "link to mortgage" would catch.
     func similarTransactions(to txn: Transaction) -> [Transaction] {
         let sig = MortgageDetection.normalize(txn.payee ?? txn.descriptionText)
         guard !sig.isEmpty else { return [txn] }
@@ -443,17 +306,73 @@ final class AppState: ObservableObject {
         }
     }
 
-    func applyDetectedPayment(_ suggestion: MortgageDetection.Suggestion, mortgageId: String) {
-        guard var m = mortgages.first(where: { $0.id == mortgageId }) else { return }
-        m.paymentPayee = suggestion.payee
-        m.paymentAmount = suggestion.amount
-        try? database?.saveMortgage(m)
-        relinkPayments(for: m)
+    func makeDraftMortgage() -> Mortgage {
+        Mortgage(id: newId(), name: "", principal: 400000, downKind: "percent", downValue: 20,
+                 annualRate: 6.5, termMonths: 360, startDate: epoch(),
+                 paymentPayee: nil, paymentAmount: nil, createdAt: epoch())
     }
 
-    func detectPayment(for m: Mortgage) -> MortgageDetection.Suggestion? {
-        let expected = summary(for: m).monthlyPayment
-        return MortgageDetection.detect(in: transactions, expectedPayment: expected)
+    // MARK: - Mortgage writes
+
+    @discardableResult
+    func upsertMortgage(_ m: Mortgage) -> Mortgage {
+        var saved = m
+        if saved.id.isEmpty { saved.id = newId() }
+        mutateEncodable("mortgages.upsert", saved)
+        return saved
+    }
+    func deleteMortgage(_ id: String) { mutate("mortgages.delete", ["id": id]) }
+
+    func addRateChange(mortgageId: String, date: Date, annualRate: Double) {
+        mutate("mortgages.addRate", ["mortgage": mortgageId, "date": epoch(date), "annual_rate": annualRate])
+    }
+    func addValuation(mortgageId: String, date: Date, value: Double, source: String? = nil) {
+        var p: [String: Any] = ["mortgage": mortgageId, "date": epoch(date), "value": value]
+        if let source { p["source"] = source }
+        mutate("mortgages.addValuation", p)
+    }
+    func addManualTxn(mortgageId: String, date: Date, amount: Double, note: String?) {
+        var p: [String: Any] = ["mortgage": mortgageId, "date": epoch(date), "amount": amount]
+        if let note { p["note"] = note }
+        mutate("mortgages.addManual", p)
+    }
+    func deleteMortgageChild(table: String, id: String) {
+        mutate("mortgages.deleteChild", ["table": table, "id": id])
+    }
+
+    /// Persist a dragged/edited valuation (preserving its id) and clear the live override.
+    func commitValuation(_ v: HomeValuation) {
+        liveValuation = nil
+        mutateEncodable("mortgages.saveValuation", v)
+    }
+    func updateValuation(_ v: HomeValuation) {
+        mutateEncodable("mortgages.saveValuation", v)
+    }
+
+    @discardableResult
+    func markAsPayment(_ txn: Transaction, mortgageId: String) -> Int {
+        mutate("mortgages.markPayment", ["transaction": txn.id, "mortgage": mortgageId])
+        return 0
+    }
+    func unlinkPayment(_ txn: Transaction) {
+        mutate("mortgages.unlinkPayment", ["transaction": txn.id])
+    }
+    func applyDetectedPayment(_ suggestion: MortgageDetection.Suggestion, mortgageId: String) {
+        mutate("mortgages.applyPayment", [
+            "mortgage": mortgageId, "payee": suggestion.payee, "amount": suggestion.amount,
+        ])
+    }
+
+    func detectPayment(for m: Mortgage) async -> MortgageDetection.Suggestion? {
+        guard let daemon else { return nil }
+        do {
+            let data = try await daemon.send("mortgages.detectPayment", ["mortgage": m.id])
+            if (try? JSONSerialization.jsonObject(with: data)) is NSNull { return nil }
+            return try? JSONDecoder().decode(MortgageDetection.Suggestion.self, from: data)
+        } catch {
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+            return nil
+        }
     }
 
     // MARK: - Zillow
@@ -463,284 +382,179 @@ final class AppState: ObservableObject {
 
     func isFetchingZillow(_ id: String) -> Bool { zillowFetching.contains(id) }
 
-    /// Manual trigger: look up the current Zestimate for the mortgage's address
-    /// and add it as a "zillow"-sourced valuation dated today.
     func fetchZillowValuation(for m: Mortgage) async {
-        // Prefer the exact Zillow property URL; fall back to the address.
-        let link = m.zillowUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let address = m.address?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let target = !link.isEmpty ? link : address
-        guard !target.isEmpty else {
-            zillowError = "Add a Zillow property link (Edit) to enable lookups."
-            return
-        }
         zillowError = nil
         zillowFetching.insert(m.id)
         defer { zillowFetching.remove(m.id) }
         do {
-            let value = try await ZillowScraper().fetchZestimate(address: target)
-            upsertZillowValuation(mortgageId: m.id, value: value)
+            _ = try await daemon?.send("zillow.fetch", ["mortgage": m.id])
+            await load()
+        } catch let e as DaemonError {
+            if e.code == "chrome_not_installed" { chromeAvailable = false }
+            zillowError = e.message
         } catch {
             zillowError = error.localizedDescription
         }
     }
 
-    /// Store today's Zillow value, replacing an earlier Zillow reading from the
-    /// same day rather than stacking duplicate points.
-    private func upsertZillowValuation(mortgageId: String, value: Double) {
-        let today = Date()
-        let existing = valuations.first {
-            $0.mortgageId == mortgageId && $0.source == "zillow"
-                && Calendar.current.isDate($0.asDate, inSameDayAs: today)
-        }
-        let id = existing?.id ?? newId()
-        try? database?.saveValuation(HomeValuation(
-            id: id, mortgageId: mortgageId, date: epoch(today), value: value, source: "zillow"))
-        loadFromDatabase()
-    }
+    // MARK: - Category reads
 
-    private func relinkPayments(for m: Mortgage) {
-        try? database?.removePaymentLinks(mortgageId: m.id)
-        let matched = MortgageDetection.matches(transactions, for: m)
-        let links = matched.map { MortgagePaymentLink(transactionId: $0.id, mortgageId: m.id) }
-        try? database?.addPaymentLinks(links)
-        loadFromDatabase()
-    }
-
-    func makeDraftMortgage() -> Mortgage {
-        Mortgage(id: newId(), name: "", principal: 400000, downKind: "percent", downValue: 20,
-                 annualRate: 6.5, termMonths: 360, startDate: epoch(Date()),
-                 paymentPayee: nil, paymentAmount: nil, createdAt: epoch(Date()))
-    }
-
-    // MARK: - Categories
-
-    // `categoriesById` is a cache rebuilt in `rebuildDerived()` (declared above).
-
-    /// All links attached to a transaction (any window). O(1) via the index.
     func links(forTransaction id: String) -> [ExpenseCategory] {
         linksByTransaction[id] ?? []
     }
-
-    /// The links that actually apply to a transaction (window contains its date).
     private func applicableLinks(for txn: Transaction) -> [ExpenseCategory] {
         links(forTransaction: txn.id).filter { $0.applies(toPosted: txn.posted) }
     }
-
-    /// The single category shown for a transaction. Manual wins over auto, then
-    /// the most recent link. Returns nil if nothing applies.
     func effectiveCategory(for txn: Transaction) -> SpendCategory? {
         let chosen = applicableLinks(for: txn).max { a, b in
-            if a.isAuto != b.isAuto { return a.isAuto && !b.isAuto } // manual ranks higher
-            return a.createdAt < b.createdAt                          // then newest
+            if a.isAuto != b.isAuto { return a.isAuto && !b.isAuto }
+            return a.createdAt < b.createdAt
         }
         return chosen.flatMap { categoriesById[$0.categoryId] }
     }
-
-    /// Every applicable category for a transaction (an expense may have several).
     func appliedCategories(for txn: Transaction) -> [SpendCategory] {
         applicableLinks(for: txn).compactMap { categoriesById[$0.categoryId] }
     }
-
-    /// Label used by the spending chart: the effective category name, else the
-    /// transaction's own group label.
     func categoryLabel(for txn: Transaction) -> String {
         effectiveCategory(for: txn)?.name ?? txn.groupLabel
     }
-
-    /// How many transactions currently carry at least one link to a category.
     func usageCount(categoryId: String) -> Int {
         Set(expenseCategories.filter { $0.categoryId == categoryId }.map { $0.transactionId }).count
     }
 
+    // MARK: - Category writes
+
     @discardableResult
     func addCategory(name: String, colorHex: String? = nil) -> SpendCategory {
-        let c = SpendCategory(id: newId(), name: name,
-                              colorHex: colorHex ?? Theme.nextCategoryColor(existing: categories.count),
-                              createdAt: epoch(Date()))
-        try? database?.saveCategory(c)
-        loadFromDatabase()
+        let c = SpendCategory(
+            id: newId(), name: name,
+            colorHex: colorHex ?? Theme.nextCategoryColor(existing: categories.count),
+            createdAt: epoch(), isTransfer: false)
+        // Optimistic local insert so the returned id is usable immediately.
+        categories.append(c)
+        categoriesById[c.id] = c
+        mutateEncodable("categories.upsert", c)
         return c
     }
-    func updateCategory(_ c: SpendCategory) {
-        try? database?.saveCategory(c)
-        loadFromDatabase()
-    }
+    func updateCategory(_ c: SpendCategory) { mutateEncodable("categories.upsert", c) }
     func deleteCategory(_ id: String) {
-        guard id != SpendCategory.transferId else { return }   // permanent
-        try? database?.deleteCategory(id: id)   // cascades to its links
-        loadFromDatabase()
+        guard id != SpendCategory.transferId else { return }
+        mutate("categories.delete", ["id": id])
     }
 
-    /// Simple manual tagging: make `categoryId` the transaction's category,
-    /// replacing any existing links. Pass nil to clear all categories. Applies to
-    /// every similar transaction (same account + title) so categorizing a merchant
-    /// once tags all of its transactions.
     func setCategory(_ txn: Transaction, categoryId: String?) {
-        for t in similarTransactions(to: txn) {
-            let links: [ExpenseCategory]
-            if let categoryId {
-                links = [ExpenseCategory(id: newId(), transactionId: t.id, categoryId: categoryId,
-                                         startDate: nil, endDate: nil, isAuto: false,
-                                         createdAt: epoch(Date()))]
-            } else {
-                links = []
-            }
-            try? database?.replaceExpenseCategories(transactionId: t.id, with: links)
-        }
-        loadFromDatabase()
+        mutate("categorize.set", ["transaction": txn.id, "category": categoryId ?? ""])
     }
-
-    /// Add a manual link, optionally windowed, without disturbing links to other
-    /// categories. Any conflicting link (same category, overlapping window) is
-    /// replaced; manual always wins.
-    func addManualLink(transactionId: String, categoryId: String,
-                       start: Date? = nil, end: Date? = nil) {
-        let link = ExpenseCategory(
-            id: newId(), transactionId: transactionId, categoryId: categoryId,
-            startDate: start.map(epoch), endDate: end.map(epoch),
-            isAuto: false, createdAt: epoch(Date()))
-        for existing in conflicts(with: link) {
-            try? database?.deleteExpenseCategory(id: existing.id)
-        }
-        try? database?.saveExpenseCategory(link)
-        loadFromDatabase()
+    func addManualLink(transactionId: String, categoryId: String, start: Date? = nil, end: Date? = nil) {
+        var p: [String: Any] = ["transaction": transactionId, "category": categoryId]
+        if let start { p["start"] = epoch(start) }
+        if let end { p["end"] = epoch(end) }
+        mutate("categorize.manual", p)
     }
-
-    /// Auto-categorization entry point (for a future AI). Respects manual intent:
-    /// if the transaction already has any manual link, it is left untouched.
-    /// Otherwise the auto link replaces conflicting auto links.
-    func autoAssign(transactionId: String, categoryId: String,
-                    start: Date? = nil, end: Date? = nil) {
-        if links(forTransaction: transactionId).contains(where: { !$0.isAuto }) { return }
-        let link = ExpenseCategory(
-            id: newId(), transactionId: transactionId, categoryId: categoryId,
-            startDate: start.map(epoch), endDate: end.map(epoch),
-            isAuto: true, createdAt: epoch(Date()))
-        for existing in conflicts(with: link) where existing.isAuto {
-            try? database?.deleteExpenseCategory(id: existing.id)
-        }
-        try? database?.saveExpenseCategory(link)
-        loadFromDatabase()
+    func autoAssign(transactionId: String, categoryId: String, start: Date? = nil, end: Date? = nil) {
+        var p: [String: Any] = ["transaction": transactionId, "category": categoryId]
+        if let start { p["start"] = epoch(start) }
+        if let end { p["end"] = epoch(end) }
+        mutate("categorize.auto", p)
     }
-
-    func removeLink(_ id: String) {
-        try? database?.deleteExpenseCategory(id: id)
-        loadFromDatabase()
-    }
+    func removeLink(_ id: String) { mutate("categorize.removeLink", ["id": id]) }
     func clearCategories(transactionId: String) {
-        let targets = transactions.first { $0.id == transactionId }
-            .map { similarTransactions(to: $0).map(\.id) } ?? [transactionId]
-        for id in targets {
-            try? database?.replaceExpenseCategories(transactionId: id, with: [])
-        }
-        loadFromDatabase()
+        mutate("categorize.clear", ["transaction": transactionId])
     }
-
-    /// Toggle a manual link to `categoryId` on or off for this transaction,
-    /// leaving links to other categories untouched. This is what the multi-select
-    /// picker uses, so an expense can carry any combination of categories. Turning
-    /// a category off removes every link to it (windowed or not); use the advanced
-    /// sheet for per-window control.
     func toggleCategory(_ txn: Transaction, categoryId: String) {
-        // Decide the direction from the clicked transaction, then apply it to the
-        // whole group (same account + title) so a merchant is tagged in one click.
-        let turningOn = !links(forTransaction: txn.id).contains { $0.categoryId == categoryId }
-        for t in similarTransactions(to: txn) {
-            let existing = links(forTransaction: t.id).filter { $0.categoryId == categoryId }
-            if turningOn {
-                if existing.isEmpty {
-                    try? database?.saveExpenseCategory(ExpenseCategory(
-                        id: newId(), transactionId: t.id, categoryId: categoryId,
-                        startDate: nil, endDate: nil, isAuto: false, createdAt: epoch(Date())))
-                }
-            } else {
-                for link in existing { try? database?.deleteExpenseCategory(id: link.id) }
-            }
-        }
-        loadFromDatabase()
-    }
-
-    /// Existing links that conflict with `candidate`: same transaction + same
-    /// category + overlapping window. (The only conflict the model recognizes.)
-    private func conflicts(with candidate: ExpenseCategory) -> [ExpenseCategory] {
-        links(forTransaction: candidate.transactionId).filter {
-            $0.id != candidate.id
-                && $0.categoryId == candidate.categoryId
-                && ExpenseCategory.windowsOverlap($0, candidate)
-        }
+        mutate("categorize.toggle", ["transaction": txn.id, "category": categoryId])
     }
 
     // MARK: - Transfers
 
-    /// The permanent Transfer category (seeded by migration v6).
     var transferCategory: SpendCategory? { categoriesById[SpendCategory.transferId] }
 
-    /// True if the transaction's effective category is flagged as a transfer, so
-    /// it should not count toward income or spending.
     func isTransfer(_ txn: Transaction) -> Bool {
         effectiveCategory(for: txn)?.isTransfer == true
     }
+    func markAsTransfer(_ txn: Transaction) { mutate("transfers.mark", ["transaction": txn.id]) }
+    func markNotTransfer(_ txn: Transaction) { mutate("transfers.unmark", ["transaction": txn.id]) }
 
-    /// Manually mark a transaction as a transfer (a normal manual link to the
-    /// Transfer category) and clear any "not a transfer" override.
-    func markAsTransfer(_ txn: Transaction) {
-        try? database?.deleteTransferExclusion(transactionId: txn.id)
-        addManualLink(transactionId: txn.id, categoryId: SpendCategory.transferId)
-    }
-
-    /// Manually mark a transaction as NOT a transfer: drop any transfer links
-    /// (manual or auto) and remember the decision so auto-detection never
-    /// re-tags it.
-    func markNotTransfer(_ txn: Transaction) {
-        for link in links(forTransaction: txn.id) where link.categoryId == SpendCategory.transferId {
-            try? database?.deleteExpenseCategory(id: link.id)
-        }
-        try? database?.saveTransferExclusion(transactionId: txn.id)
-        loadFromDatabase()
-    }
-
-    /// Scan all transactions for transfer pairs and auto-link both legs to the
-    /// Transfer category. Respects manual intent (skips transactions with any
-    /// manual link) and "not a transfer" overrides. Returns the number of newly
-    /// linked transactions. Pure detection lives in `TransferDetection`.
     @discardableResult
-    func autoDetectTransfers() -> Int {
-        guard let database, let cat = transferCategory else { return 0 }
-        let detected = TransferDetection.detect(in: transactions)
-        var added = 0
-        for id in detected {
-            if transferExclusions.contains(id) { continue }
-            let existing = links(forTransaction: id)
-            if existing.contains(where: { !$0.isAuto }) { continue }            // manual wins
-            if existing.contains(where: { $0.categoryId == cat.id }) { continue } // already linked
-            let link = ExpenseCategory(
-                id: newId(), transactionId: id, categoryId: cat.id,
-                startDate: nil, endDate: nil, isAuto: true, createdAt: epoch(Date()))
-            try? database.saveExpenseCategory(link)
-            added += 1
+    func autoDetectTransfers() async -> Int {
+        guard let daemon else { return 0 }
+        do {
+            let data = try await daemon.send("transfers.detect")
+            struct Reply: Decodable { let added: Int }
+            let r = try JSONDecoder().decode(Reply.self, from: data)
+            await load()
+            return r.added
+        } catch {
+            errorMessage = (error as? DaemonError)?.message ?? error.localizedDescription
+            return 0
         }
-        if added > 0 { loadFromDatabase() }
-        return added
     }
 
     // MARK: - Derived data for the dashboard
-    //
-    // Caches, not computed properties: each is O(transactions) to build and the
-    // dashboard reads all of them on every render. They are rebuilt once per data
-    // change in `rebuildDerived()`.
 
-    /// Ids of accounts the user hid from the dashboard (derived from `accounts`).
     private(set) var hiddenAccountIds: Set<String> = []
-    /// Accounts the user has not hidden (what the dashboard counts and totals).
     private(set) var visibleAccounts: [Account] = []
-    /// Transactions on visible accounts (hidden-account rows removed). The recent
-    /// list renders these; transfers are still shown, only hidden accounts drop.
     private(set) var visibleTransactions: [Transaction] = []
-    /// Transactions that count as real income/spending (transfers removed).
-    private(set) var spendingTransactions: [Transaction] = []
     private(set) var summary = Analytics.Summary()
     private(set) var monthlyFlows: [Analytics.MonthlyFlow] = []
     private(set) var topSpending: [Analytics.CategorySpend] = []
-    var primaryCurrency: String { accounts.first?.currency ?? "USD" }
+    private(set) var primaryCurrency: String = "USD"
+
+    // MARK: - Helpers
+
+    private func epoch(_ d: Date = Date()) -> Int { Int(d.timeIntervalSince1970) }
+    private func newId() -> String { UUID().uuidString }
+}
+
+/// The one-shot snapshot returned by the engine's `state` method.
+private struct DaemonState: Decodable {
+    var mode: String
+    var connected: Bool
+    var importOnly: Bool
+    var writable: Bool
+    var lastSync: Int?
+    var chromeAvailable: Bool
+    var primaryCurrency: String
+    var config: DaemonConfig
+    var accounts: [Account]
+    var transactions: [Transaction]
+    var categories: [SpendCategory]
+    var expenseCategories: [ExpenseCategory]
+    var transferExclusions: [TransferExclusion]
+    var mortgages: [Mortgage]
+    var rateChanges: [MortgageRateChange]
+    var valuations: [HomeValuation]
+    var manualTxns: [MortgageManualTxn]
+    var paymentLinks: [MortgagePaymentLink]
+    var dashboard: Analytics.DashboardData
+    var mortgageSummaries: [String: MortgageEngine.Summary]
+    var mortgageSchedules: [String: [MortgageEngine.Point]]
+
+    enum CodingKeys: String, CodingKey {
+        case mode, connected, writable, dashboard, accounts, transactions, categories, mortgages, valuations
+        case importOnly = "import_only"
+        case lastSync = "last_sync"
+        case chromeAvailable = "chrome_available"
+        case primaryCurrency = "primary_currency"
+        case config
+        case expenseCategories = "expense_categories"
+        case transferExclusions = "transfer_exclusions"
+        case rateChanges = "rate_changes"
+        case manualTxns = "manual_txns"
+        case paymentLinks = "payment_links"
+        case mortgageSummaries = "mortgage_summaries"
+        case mortgageSchedules = "mortgage_schedules"
+    }
+}
+
+private struct DaemonConfig: Decodable {
+    var sync: SyncConfig
+    struct SyncConfig: Decodable {
+        var minIntervalHours: Int
+        var historyDays: Int
+        enum CodingKeys: String, CodingKey {
+            case minIntervalHours = "min_interval_hours"
+            case historyDays = "history_days"
+        }
+    }
 }

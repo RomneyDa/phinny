@@ -23,3 +23,8 @@ dist/
 
 # Docs site local tooling (the docs are plain static HTML, but ignore caches)
 docs/node_modules/
+
+# Go engine in-place build outputs
+cli/phinny
+cli/phinny-arm64
+cli/phinny-amd64

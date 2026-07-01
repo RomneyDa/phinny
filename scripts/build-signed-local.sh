@@ -39,6 +39,23 @@ rm -rf dist/Phinny.app
 cp -R ".build/Build/Products/Release/Phinny.app" dist/Phinny.app
 APP="dist/Phinny.app"
 
+# Build + bundle the phinny Go engine (universal, pure Go / no cgo). The app
+# launches it as `phinny serve --stdio`. It must be signed with the hardened
+# runtime + a secure timestamp for notarization to pass.
+echo "Building phinny engine ..."
+ENGINE_DIR=".build/engine"
+mkdir -p "$ENGINE_DIR"
+( cd cli
+  CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o "../$ENGINE_DIR/phinny-arm64" ./cmd/phinny
+  CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o "../$ENGINE_DIR/phinny-amd64" ./cmd/phinny
+)
+lipo -create -output "$ENGINE_DIR/phinny" "$ENGINE_DIR/phinny-arm64" "$ENGINE_DIR/phinny-amd64"
+mkdir -p "$APP/Contents/Resources"
+cp "$ENGINE_DIR/phinny" "$APP/Contents/Resources/phinny"
+chmod +x "$APP/Contents/Resources/phinny"
+codesign --force --options runtime --timestamp \
+    -s "$DEVELOPER_ID_APPLICATION" "$APP/Contents/Resources/phinny"
+
 # Sign embedded frameworks/dylibs first (SPM links statically, so usually a
 # no-op), then the app bundle with the hardened runtime.
 if [ -d "$APP/Contents/Frameworks" ]; then

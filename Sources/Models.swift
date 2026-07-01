@@ -1,8 +1,8 @@
 import Foundation
-import GRDB
 
-/// A bank/credit account, as stored in SQLite. Mirrors a SimpleFIN account.
-struct Account: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
+/// A bank/credit account. Decoded from the phinny daemon (snake_case JSON); the
+/// daemon owns SQLite storage. Encodable too, for the rare round-trip.
+struct Account: Codable, Identifiable, Hashable {
     var id: String
     var name: String
     var orgName: String
@@ -11,24 +11,21 @@ struct Account: Codable, Identifiable, Hashable, FetchableRecord, PersistableRec
     var availableBalance: Double?
     /// Epoch seconds of the balance reading.
     var balanceDate: Int?
-    /// User chose to hide this account from the dashboard totals/charts. Set in
-    /// the SimpleFIN tab; preserved across syncs (see `AppDatabase.replace`).
+    /// User chose to hide this account from the dashboard totals/charts.
     var hidden: Bool = false
 
-    static let databaseTableName = "account"
+    enum CodingKeys: String, CodingKey {
+        case id, name, currency, balance, hidden
+        case orgName = "org_name"
+        case availableBalance = "available_balance"
+        case balanceDate = "balance_date"
+    }
 }
 
-/// A single transaction, as stored in SQLite. Mirrors a SimpleFIN transaction.
-///
-/// `amount` follows the SimpleFIN sign convention: negative = money out
-/// (spending), positive = money in (income).
-struct Transaction: Codable, Identifiable, Hashable, FetchableRecord, PersistableRecord {
-    /// Globally-unique key ("accountId|providerId"), used as the SQLite primary
-    /// key and SwiftUI identity. SimpleFIN transaction ids are only unique
-    /// *within* an account (the demo bridge even reuses them across accounts),
-    /// so we namespace by account to avoid collisions on upsert.
+/// A single transaction. `amount` follows the SimpleFIN sign convention:
+/// negative = money out (spending), positive = money in (income).
+struct Transaction: Codable, Identifiable, Hashable {
     var id: String
-    /// The original SimpleFIN transaction id (kept for debugging / future dedup).
     var providerId: String
     var accountId: String
     /// Epoch seconds when the transaction posted.
@@ -40,7 +37,12 @@ struct Transaction: Codable, Identifiable, Hashable, FetchableRecord, Persistabl
     var category: String?
     var pending: Bool
 
-    static let databaseTableName = "transaction_row"
+    enum CodingKeys: String, CodingKey {
+        case id, posted, amount, payee, memo, category, pending
+        case providerId = "provider_id"
+        case accountId = "account_id"
+        case descriptionText = "description"
+    }
 
     var date: Date { Date(timeIntervalSince1970: TimeInterval(posted)) }
     var isIncome: Bool { amount > 0 }

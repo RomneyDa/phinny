@@ -4,63 +4,80 @@ Guidance for coding agents (and humans) working on Phinny. Keep it simple - that
 
 ## What Phinny is
 
-A native macOS SwiftUI app that pulls bank data from SimpleFIN into a local SQLite database and charts income/spending. No backend, no telemetry, no web view.
+A native macOS SwiftUI app that charts your income/spending, backed by a headless **Go engine** (`phinny`) that owns all the real work: SimpleFIN sync, the local SQLite database, Apple Card import, categorization, transfer detection, mortgage math, and Zillow lookups. No backend server, no telemetry, no web view.
+
+The Go engine is also a standalone **CLI usable by any agent**: every feature in the app is a `phinny` subcommand (or JSON-RPC method). The app is a thin wrapper - it launches `phinny serve --stdio` once and drives it over a pipe.
+
+```
+SwiftUI app  --stdio JSON-RPC--+
+                               +--> phinny (Go engine) --> ~/.phinny/phinny.sqlite
+any agent (CLI / HTTP)  -------+
+```
+
+This split means the app and agents share one code path and one database. See `cli/README.md` for the full CLI surface.
 
 ## Project layout
 
 ```
 project.yml                 XcodeGen spec - the source of truth for the Xcode project
-Sources/
+cli/                        The phinny Go engine (module github.com/RomneyDa/phinny/cli)
+  cmd/phinny/main.go        CLI dispatch + `serve` daemon (stdio / http)
+  internal/model            Pure domain types (shared, no I/O)
+  internal/store            SQLite (modernc.org/sqlite, WAL); GRDB-compatible migrations
+  internal/simplefin        SimpleFIN claim + fetch (the ONLY banking network code)
+  internal/importer         Apple Card CSV/OFX/QFX/QBO parser (pure)
+  internal/analytics        transactions -> chart series (pure)
+  internal/transfers        offsetting cross-account pair detection (pure)
+  internal/mortgage         amortization engine + payment detection (pure)
+  internal/zillow           Zestimate scrape via headless Chrome (chromedp; PEER dep)
+  internal/keychain         SimpleFIN access URL in the macOS Keychain (via `security`)
+  internal/config           ~/.phinny paths + config.yaml
+  internal/service          orchestration (the AppState logic): bootstrap, sync, import,
+                            categorize, transfers, mortgages, FullState snapshot
+  internal/rpc              one dispatch shared by the CLI and the daemon (stdio + http)
+Sources/                    The SwiftUI app - now a thin client over the engine:
   PhinnyApp.swift           @main App + window
-  AppState.swift            @MainActor ObservableObject - the only place that mutates app state
-  SimpleFINClient.swift     SimpleFIN protocol (claim + fetch). The ONLY network code.
-  StatementImporter.swift   Pure parser for Apple Card exports (CSV/OFX/QFX/QBO)
-                            -> SimpleFINClient.FetchResult (Apple Card can't be
-                            synced via SimpleFIN; user imports a Wallet export)
-  Database.swift            GRDB/SQLite (~/.phinny/phinny.sqlite)
-  Keychain.swift            Stores the SimpleFIN access URL (credentials) securely
-  Config.swift              ~/.phinny paths + config.yaml (non-sensitive settings)
-  Keychain.swift            Stores the SimpleFIN access URL (credentials) securely
-  Models.swift              Account, Transaction (GRDB records)
-  Analytics.swift           Pure functions: transactions -> chart series
-  DemoData.swift            Synthesizes the bundled demo database
-  Mortgage/                 MortgageModels, MortgageEngine (pure amortization),
-                            MortgageDetection (link/detect payments),
-                            ZillowScraper (offscreen WKWebView Zestimate lookup;
-                            prefers a pasted homedetails URL over address search)
-  Categories/               CategoryModels (SpendCategory + ExpenseCategory link
-                            with isAuto flag and optional effective date range;
-                            TransferExclusion), TransferDetection (pure: spots
-                            offsetting cross-account pairs)
-  Views/                    SwiftUI: RootView, MainView (sidebar), Dashboard, Charts,
-                            OnboardingView (connect sheet),
-                            Mortgage/ (detail, editor, InteractiveHomeValueChart, AddressField),
-                            Categories/ (CategoriesView manager, CategoryChip,
-                            AssignCategorySheet)
-Resources/                  Entitlements, Assets.xcassets (procedural app icon),
-                            phinny-demo.sqlite (bundled demo data), generated Info.plist
-scripts/                    run.sh, build-app.sh, build-signed-local.sh,
-                            generate-icon.swift, generate-demo-db.sh
+  PhinnyDaemon.swift        launches `phinny serve --stdio`, line-delimited JSON-RPC
+  AppState.swift            @MainActor store: loads a FullState snapshot per change,
+                            routes every mutation through the daemon
+  Models / Analytics / Mortgage / Categories
+                            Codable shells decoded from the engine's JSON + small pure
+                            presentation helpers (category resolution, normalize, the
+                            live payment formula). The heavy logic lives in the engine.
+  Views/                    SwiftUI: unchanged consumers of AppState
+Resources/                  Entitlements, Assets.xcassets, phinny-demo.sqlite, Info.plist
+                            (build-app.sh also embeds the built phinny binary here)
+archive/                    The pre-Go Swift engine, kept for reference (not built)
+scripts/                    run.sh, build-app.sh, build-signed-local.sh, ...
 docs/                       Single-page static docs site
-.github/workflows/          release.yml (build -> sign -> notarize -> GitHub Release)
+.github/workflows/          release.yml (Go + build -> sign -> notarize -> Release)
 ```
 
 ## Modes
 
-- **Demo** (no account, no local DB): opens the bundled `phinny-demo.sqlite`. No network. Default state.
-- **Connected** (access URL in Keychain): reads/writes `~/.phinny/phinny.sqlite` and syncs.
-- **Import-only** (no access URL, but `~/.phinny/phinny.sqlite` exists from an Apple Card import): reads/writes the real DB but has nothing to sync, so the dashboard hides "Sync Now". `AppState.isImportOnly` reports this.
+The **engine** picks the mode (`service.bootstrap`), and the app reflects it:
 
-`AppState.bootstrap()` chooses the mode (Keychain URL -> connected; else real DB with the Apple Card account -> import-only; else demo). In Debug, a `SIMPLEFIN_TOKEN` from `.env` auto-connects (run via `./scripts/run.sh`).
+- **Demo** (no account, no real DB): copies the bundled `phinny-demo.sqlite` and opens it. No network. Default state. The app passes the bundled DB path via `serve --demo-source <path>`.
+- **Connected** (access URL in Keychain): reads/writes `~/.phinny/phinny.sqlite` and syncs.
+- **Import-only** (no access URL, but a real DB exists from an Apple Card import): reads/writes the real DB but has nothing to sync, so the dashboard hides "Sync Now".
+
+In Debug, a `SIMPLEFIN_TOKEN` from `.env` makes the app call `connect` on first launch (run via `./scripts/run.sh`). Launch-time auto-sync is stale-only (the app gates it from the FullState snapshot's `last_sync` + `config.min_interval_hours`).
+
+The SQLite schema is shared with the historical GRDB database: the Go migrator uses the same `grdb_migrations` table and identifiers (v1..v9), so it opens existing user databases (and the committed demo DB) without re-creating tables.
+
+> **Known follow-up:** the demo-data synthesizer (old `DemoData.swift`) is not yet ported to Go, so `scripts/generate-demo-db.sh` now only validates the committed `Resources/phinny-demo.sqlite`. A `phinny gen-demo` command would restore one-command regeneration.
 
 ## Build & run
 
 ```bash
 ./scripts/run.sh                                   # build + launch (passes .env)
 ./scripts/build-app.sh && open dist/Phinny.app     # dev-signed build, no launch
-xcodegen generate && open Phinny.xcodeproj         # iterate in Xcode
-./scripts/generate-demo-db.sh                      # rebuild Resources/phinny-demo.sqlite
+xcodegen generate && open Phinny.xcodeproj         # iterate in Xcode (set PHINNY_BIN to a go-built engine)
+( cd cli && go build ./... && go test ./... )      # build + test the Go engine
+./scripts/generate-demo-db.sh                      # validate the bundled demo DB
 ```
+
+`build-app.sh` cross-compiles the `phinny` engine (universal, pure Go / no cgo) and embeds it at `Phinny.app/Contents/Resources/phinny`; `codesign --deep` signs it. The app finds it via `Bundle.main`, or via the `PHINNY_BIN` env override when iterating in Xcode (point it at `cli`'s `go build` output so you don't rebuild the app each time).
 
 The `.xcodeproj` and `Resources/Info.plist` are **generated** (git-ignored). Never hand-edit them - change `project.yml`.
 
@@ -82,11 +99,11 @@ The token is single-use: after the first connect the access URL is stored in you
 
 ## Hard rules
 
-1. **Respect the SimpleFIN budget (~24 requests/day).** Do NOT add code paths that sync on a timer, on every launch, or in a loop. Auto-sync is gated by `AppState.shouldAutoSync` (stale-only). When testing, use **demo mode** (the default, bundled sample data, no network) - never spam a real token. Aim for 1-2 real syncs, then work against the cached SQLite data.
-2. **Credentials only in the Keychain.** The access URL embeds bank-read credentials. It must never be written to `config.yaml`, logged, or committed. Use `Keychain.swift`.
-3. **One source of truth.** All mutable UI state lives in `AppState`. Views are read-only consumers; keep them dumb.
-4. **Keep `Analytics` pure.** No I/O there - it makes the aggregations trivially testable and the charts predictable.
-5. **`SimpleFINClient` is the only networking.** Don't scatter `URLSession` calls elsewhere.
+1. **Respect the SimpleFIN budget (~24 requests/day).** Do NOT add code paths that sync on a timer, on every launch, or in a loop. Auto-sync is stale-only (`service.ShouldAutoSync`; the app gates the launch sync from the FullState snapshot). When testing, use **demo mode** (`phinny --demo --demo-source <db>` / the app default, no network) - never spam a real token. Aim for 1-2 real syncs, then work against the cached SQLite data.
+2. **Credentials only in the Keychain.** The access URL embeds bank-read credentials. It must never be written to `config.yaml`, logged, or committed. Use `internal/keychain` (the engine; the app no longer touches the Keychain directly).
+3. **One source of truth.** All persistence and mutation lives in the Go engine (`internal/service`). The app's `AppState` is a read-through/RPC client; Views are read-only consumers of `AppState`; keep them dumb.
+4. **Keep the pure packages pure.** `internal/analytics`, `internal/importer`, `internal/transfers`, and the `internal/mortgage` math do no I/O, so they stay trivially testable (`go test ./...`).
+5. **`internal/simplefin` is the only banking network code.** Don't scatter HTTP calls elsewhere. (`internal/zillow` is the only other network path, and it is opt-in + behind the Chrome peer dependency.)
 6. **No em-dashes. Ever.** Do not use em-dashes (the long dash) or en-dashes anywhere: not in docs, READMEs, UI copy, commit messages, code comments, or strings. Use a plain hyphen, a comma, parentheses, or two sentences instead. This is a hard style rule for the whole repo.
 
 ## Conventions

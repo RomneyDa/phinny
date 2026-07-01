@@ -13,16 +13,11 @@ configs:
   Debug: debug
   Release: release
 
-packages:
-  # SQLite access layer - clean, typed, well documented. Storage lives in
-  # ~/.phinny/phinny.sqlite (see Database.swift).
-  GRDB:
-    url: https://github.com/groue/GRDB.swift
-    from: "7.0.0"
-  # YAML config parsing - ~/.phinny/config.yaml (see Config.swift).
-  Yams:
-    url: https://github.com/jpsim/Yams
-    from: "5.1.0"
+# No Swift package dependencies. All storage (SQLite), networking (SimpleFIN),
+# YAML config, Keychain access, statement import, mortgage math, and Zillow
+# scraping now live in the bundled `phinny` Go engine, which the app drives over
+# stdio (see PhinnyDaemon.swift). scripts/build-app.sh builds the engine and
+# copies it into Contents/Resources/phinny.
 
 targets:
   Phinny:
@@ -76,8 +71,3 @@ targets:
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEBUG
-    dependencies:
-      - package: GRDB
-        product: GRDB
-      - package: Yams
-        product: Yams

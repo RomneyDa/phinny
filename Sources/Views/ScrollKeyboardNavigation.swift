@@ -22,7 +22,9 @@ private struct ScrollKeyCatcher: NSViewRepresentable {
 }
 
 final class KeyCatcherView: NSView {
-    private var monitors: [Any] = []
+    // nonisolated(unsafe): only mutated on the main actor; deinit (nonisolated)
+    // reads it for cleanup when no other reference can race.
+    nonisolated(unsafe) private var monitors: [Any] = []
     /// After a programmatic jump we briefly swallow trackpad momentum events that
     /// are still in flight, otherwise the leftover momentum drags the container
     /// back off the top/bottom we just jumped to.
@@ -45,7 +47,12 @@ final class KeyCatcherView: NSView {
         }
     }
 
-    deinit { removeMonitors() }
+    deinit {
+        // Inline cleanup (rather than calling the main-actor `removeMonitors`)
+        // so a nonisolated deinit doesn't hop the actor. NSEvent.removeMonitor is
+        // safe to call here and `monitors` is exclusively ours at deinit.
+        for m in monitors { NSEvent.removeMonitor(m) }
+    }
 
     private func removeMonitors() {
         for m in monitors { NSEvent.removeMonitor(m) }

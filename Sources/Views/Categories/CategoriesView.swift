@@ -43,10 +43,12 @@ struct CategoriesView: View {
                         }
                         Spacer()
                         Button("Detect transfers") {
-                            let n = state.autoDetectTransfers()
-                            transferMessage = n == 0
-                                ? "No new transfers found."
-                                : "Tagged \(n) transaction\(n == 1 ? "" : "s") as transfers."
+                            Task {
+                                let n = await state.autoDetectTransfers()
+                                transferMessage = n == 0
+                                    ? "No new transfers found."
+                                    : "Tagged \(n) transaction\(n == 1 ? "" : "s") as transfers."
+                            }
                         }
                         .buttonStyle(.bordered)
                     }

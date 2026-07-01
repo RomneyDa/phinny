@@ -23,6 +23,14 @@ jobs:
       - name: Install build tools
         run: brew install xcodegen create-dmg
 
+      # The bundled phinny engine is built from cli/ (pure Go, no cgo) and
+      # embedded into the app by build-signed-local.sh.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
       - name: Import Developer ID certificate
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}

@@ -41,7 +41,12 @@ struct MortgageDetailView: View {
                 CardSection("Home Value", subtitle: "Double-click to add a point, drag to adjust, click to edit") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            if let err = state.zillowError {
+                            if !state.chromeAvailable {
+                                Label("Zillow lookups need Google Chrome installed",
+                                      systemImage: "exclamationmark.triangle")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            } else if let err = state.zillowError {
                                 Label(err, systemImage: "exclamationmark.triangle")
                                     .font(.caption).foregroundStyle(Theme.expense)
                                     .lineLimit(2)
@@ -50,15 +55,22 @@ struct MortgageDetailView: View {
                             if state.isFetchingZillow(mortgage.id) {
                                 ProgressView().controlSize(.small)
                             }
-                            Button {
-                                Task { await state.fetchZillowValuation(for: mortgage) }
-                            } label: {
-                                Label("Update from Zillow", systemImage: "house.and.flag")
+                            if !state.chromeAvailable {
+                                Link(destination: AppState.chromeInstallURL) {
+                                    Label("Install Chrome", systemImage: "arrow.down.circle")
+                                }
+                                .help("Chrome (or another Chromium browser) drives the Zestimate lookup. Install it, then reopen Phinny.")
+                            } else {
+                                Button {
+                                    Task { await state.fetchZillowValuation(for: mortgage) }
+                                } label: {
+                                    Label("Update from Zillow", systemImage: "house.and.flag")
+                                }
+                                .disabled(state.isFetchingZillow(mortgage.id) || !hasZillowLink)
+                                .help(hasZillowLink
+                                      ? "Fetch the current Zestimate from the linked Zillow page"
+                                      : "Paste a Zillow property link (Edit) to enable lookups")
                             }
-                            .disabled(state.isFetchingZillow(mortgage.id) || !hasZillowLink)
-                            .help(hasZillowLink
-                                  ? "Fetch the current Zestimate from the linked Zillow page"
-                                  : "Paste a Zillow property link (Edit) to enable lookups")
                         }
                         InteractiveHomeValueChart(mortgage: mortgage)
                     }
@@ -228,8 +240,10 @@ struct MortgageDetailView: View {
                 }
                 HStack {
                     Button {
-                        detected = state.detectPayment(for: mortgage)
-                        showDetectResult = detected != nil
+                        Task {
+                            detected = await state.detectPayment(for: mortgage)
+                            showDetectResult = detected != nil
+                        }
                     } label: { Label("Detect automatically", systemImage: "wand.and.stars") }
                     if !showDetectResult, detected == nil, mortgage.paymentPayee == nil {
                         // no-op placeholder to keep layout stable

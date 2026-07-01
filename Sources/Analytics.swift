@@ -1,103 +1,74 @@
 import Foundation
 
-/// Pure aggregation helpers that turn raw transactions into the series the
-/// charts render. No I/O - easy to read, easy to test.
+/// Chart/series value types. The aggregation math now lives in the phinny Go
+/// engine (analytics package); these are the decoded results it returns in the
+/// `dashboard` payload. Kept under the `Analytics` namespace so the views are
+/// unchanged.
 enum Analytics {
 
     /// Income vs. spending for one calendar month.
-    struct MonthlyFlow: Identifiable {
+    struct MonthlyFlow: Identifiable, Decodable {
         let month: Date            // first day of the month
-        let income: Double         // sum of positive amounts
-        let expense: Double        // sum of |negative amounts|
+        let income: Double
+        let expense: Double
         var id: Date { month }
         var net: Double { income - expense }
+
+        enum CodingKeys: String, CodingKey { case month, income, expense }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let epoch = try c.decode(Int.self, forKey: .month)
+            month = Date(timeIntervalSince1970: TimeInterval(epoch))
+            income = try c.decode(Double.self, forKey: .income)
+            expense = try c.decode(Double.self, forKey: .expense)
+        }
     }
 
     /// Spending grouped by category/merchant.
-    struct CategorySpend: Identifiable {
+    struct CategorySpend: Identifiable, Decodable {
         let label: String
         let amount: Double
         var id: String { label }
     }
 
     /// Headline numbers for the summary cards.
-    struct Summary {
+    struct Summary: Decodable {
         var totalBalance: Double = 0
         var currentMonthIncome: Double = 0
         var currentMonthExpense: Double = 0
         var transactionCount: Int = 0
         var accountCount: Int = 0
         var currentMonthNet: Double { currentMonthIncome - currentMonthExpense }
-    }
 
-    private static var calendar: Calendar {
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = .current
-        return c
-    }
+        init() {}
 
-    private static func startOfMonth(_ date: Date) -> Date {
-        let c = calendar
-        return c.date(from: c.dateComponents([.year, .month], from: date)) ?? date
-    }
-
-    /// Income/expense per month for the last `months` months (oldest first),
-    /// including empty months so the chart has a continuous axis.
-    static func monthlyFlows(_ transactions: [Transaction], months: Int = 12) -> [MonthlyFlow] {
-        let cal = calendar
-        let thisMonth = startOfMonth(Date())
-
-        // Build the ordered list of buckets we want to show.
-        var buckets: [Date] = []
-        for offset in stride(from: months - 1, through: 0, by: -1) {
-            if let m = cal.date(byAdding: .month, value: -offset, to: thisMonth) {
-                buckets.append(m)
-            }
+        enum CodingKeys: String, CodingKey {
+            case totalBalance = "total_balance"
+            case currentMonthIncome = "current_month_income"
+            case currentMonthExpense = "current_month_expense"
+            case transactionCount = "transaction_count"
+            case accountCount = "account_count"
         }
-        let earliest = buckets.first ?? thisMonth
-
-        var income: [Date: Double] = [:]
-        var expense: [Date: Double] = [:]
-        for txn in transactions where txn.date >= earliest {
-            let key = startOfMonth(txn.date)
-            if txn.amount >= 0 { income[key, default: 0] += txn.amount }
-            else { expense[key, default: 0] += -txn.amount }
-        }
-
-        return buckets.map { month in
-            MonthlyFlow(month: month, income: income[month] ?? 0, expense: expense[month] ?? 0)
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            totalBalance = try c.decodeIfPresent(Double.self, forKey: .totalBalance) ?? 0
+            currentMonthIncome = try c.decodeIfPresent(Double.self, forKey: .currentMonthIncome) ?? 0
+            currentMonthExpense = try c.decodeIfPresent(Double.self, forKey: .currentMonthExpense) ?? 0
+            transactionCount = try c.decodeIfPresent(Int.self, forKey: .transactionCount) ?? 0
+            accountCount = try c.decodeIfPresent(Int.self, forKey: .accountCount) ?? 0
         }
     }
 
-    /// Top spending groups (category → merchant → description) within the last
-    /// `days` days. Anything past `topN` is collapsed into "Other".
-    static func topSpending(_ transactions: [Transaction], days: Int = 30, topN: Int = 7,
-                            label: (Transaction) -> String = { $0.groupLabel }) -> [CategorySpend] {
-        let cutoff = calendar.date(byAdding: .day, value: -days, to: Date()) ?? .distantPast
-        var totals: [String: Double] = [:]
-        for txn in transactions where txn.isExpense && txn.date >= cutoff {
-            totals[label(txn), default: 0] += -txn.amount
+    /// The whole `dashboard` payload.
+    struct DashboardData: Decodable {
+        var summary: Summary
+        var monthlyFlows: [MonthlyFlow]
+        var topSpending: [CategorySpend]
+
+        enum CodingKeys: String, CodingKey {
+            case summary
+            case monthlyFlows = "monthly_flows"
+            case topSpending = "top_spending"
         }
-        let sorted = totals.map { CategorySpend(label: $0.key, amount: $0.value) }
-            .sorted { $0.amount > $1.amount }
-
-        guard sorted.count > topN else { return sorted }
-        let top = Array(sorted.prefix(topN))
-        let otherTotal = sorted.dropFirst(topN).reduce(0) { $0 + $1.amount }
-        return top + [CategorySpend(label: "Other", amount: otherTotal)]
-    }
-
-    static func summary(accounts: [Account], transactions: [Transaction]) -> Summary {
-        var s = Summary()
-        s.accountCount = accounts.count
-        s.transactionCount = transactions.count
-        s.totalBalance = accounts.reduce(0) { $0 + $1.balance }
-
-        let monthStart = startOfMonth(Date())
-        for txn in transactions where txn.date >= monthStart {
-            if txn.amount >= 0 { s.currentMonthIncome += txn.amount }
-            else { s.currentMonthExpense += -txn.amount }
-        }
-        return s
     }
 }
