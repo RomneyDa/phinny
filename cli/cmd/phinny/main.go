@@ -19,13 +19,18 @@ import (
 	"github.com/RomneyDa/phinny/cli/internal/service"
 )
 
-func main() {
-	args := os.Args[1:]
-	opts := service.Options{}
-	var demoSource string
-
-	// Global flags may appear before the command.
-	var rest []string
+// parseGlobals pulls the global flags out of args, wherever they appear, and
+// returns everything left over as the command and its arguments.
+//
+// They have to be recognized after the command too: the app launches the engine
+// as `serve --stdio --demo-source <path> --demo`, and a parser that stopped at
+// the first non-flag dropped both silently, so the daemon opened the real
+// database instead of the demo one, and a first run with no account showed an
+// empty dashboard rather than the bundled sample data.
+//
+// `help` only counts before the command, so a subcommand can still take it as
+// an ordinary argument.
+func parseGlobals(args []string) (opts service.Options, rest []string, wantHelp bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -35,17 +40,23 @@ func main() {
 		case a == "--demo":
 			opts.ForceDemo = true
 		case a == "--demo-source" && i+1 < len(args):
-			demoSource = args[i+1]
+			opts.DemoSource = args[i+1]
 			i++
-		case a == "-h" || a == "--help" || a == "help":
-			usage()
-			return
+		case a == "-h" || a == "--help" || (a == "help" && len(rest) == 0):
+			return opts, rest, true
 		default:
-			rest = append(rest, args[i:]...)
-			i = len(args)
+			rest = append(rest, a)
 		}
 	}
-	opts.DemoSource = demoSource
+	return opts, rest, false
+}
+
+func main() {
+	opts, rest, wantHelp := parseGlobals(os.Args[1:])
+	if wantHelp {
+		usage()
+		return
+	}
 
 	if len(rest) == 0 {
 		usage()
@@ -69,7 +80,7 @@ func main() {
 	h := &rpc.Handler{Svc: svc}
 
 	if cmd == "serve" {
-		runServe(h, rest, demoSource)
+		runServe(h, rest)
 		return
 	}
 
@@ -338,7 +349,7 @@ func mapMortgage(a []string) (string, map[string]any, string) {
 
 // ---- serve --------------------------------------------------------------
 
-func runServe(h *rpc.Handler, a []string, demoSource string) {
+func runServe(h *rpc.Handler, a []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
