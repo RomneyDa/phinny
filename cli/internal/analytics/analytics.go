@@ -24,13 +24,45 @@ type CategorySpend struct {
 }
 
 // Summary holds the headline numbers for the summary cards.
+//
+// TotalBalance covers liquid accounts only (credit cards carry negative
+// balances, so they already net out). NetWorth additionally folds in home
+// equity, which lives outside the account tables; see WithMortgageEquity.
 type Summary struct {
 	TotalBalance        float64 `json:"total_balance"`
+	MortgageEquity      float64 `json:"mortgage_equity"`
+	NetWorth            float64 `json:"net_worth"`
 	CurrentMonthIncome  float64 `json:"current_month_income"`
 	CurrentMonthExpense float64 `json:"current_month_expense"`
 	CurrentMonthNet     float64 `json:"current_month_net"`
 	TransactionCount    int     `json:"transaction_count"`
 	AccountCount        int     `json:"account_count"`
+}
+
+// WithMortgageEquity folds home equity into the summary and returns the result,
+// so net worth is account balances plus equity. Mortgages are not accounts, so
+// the caller (the service layer, which can read them) supplies the total rather
+// than this package reaching for I/O.
+func (s Summary) WithMortgageEquity(equity float64) Summary {
+	s.MortgageEquity = equity
+	s.NetWorth = s.TotalBalance + equity
+	return s
+}
+
+// AccountRollup is the per-account breakdown behind the aggregate summary, so
+// the dashboard can show where a balance actually sits instead of one total.
+// The monthly figures use the same transfer-filtered set as Summary, keeping a
+// rollup consistent with the headline it adds up to.
+type AccountRollup struct {
+	AccountID           string  `json:"account_id"`
+	Name                string  `json:"name"`
+	OrgName             string  `json:"org_name"`
+	Currency            string  `json:"currency"`
+	Balance             float64 `json:"balance"`
+	CurrentMonthIncome  float64 `json:"current_month_income"`
+	CurrentMonthExpense float64 `json:"current_month_expense"`
+	CurrentMonthNet     float64 `json:"current_month_net"`
+	TransactionCount    int     `json:"transaction_count"`
 }
 
 func startOfMonth(t time.Time) time.Time {
@@ -133,5 +165,53 @@ func SummaryOf(accounts []model.Account, txns []model.Transaction, now time.Time
 		}
 	}
 	s.CurrentMonthNet = s.CurrentMonthIncome - s.CurrentMonthExpense
+	// With no mortgages, net worth is just the balances. Callers that own
+	// mortgages layer equity on with WithMortgageEquity.
+	s.NetWorth = s.TotalBalance
 	return s
+}
+
+// AccountRollups breaks the summary down per account, largest balance first, so
+// the dashboard can list where the money sits. Pass the same transfer-filtered
+// transactions given to SummaryOf so the parts match the whole.
+func AccountRollups(accounts []model.Account, txns []model.Transaction, now time.Time) []AccountRollup {
+	byAccount := make(map[string]*AccountRollup, len(accounts))
+	out := make([]AccountRollup, 0, len(accounts))
+	for _, a := range accounts {
+		out = append(out, AccountRollup{
+			AccountID: a.ID,
+			Name:      a.Name,
+			OrgName:   a.OrgName,
+			Currency:  a.Currency,
+			Balance:   a.Balance,
+		})
+	}
+	for i := range out {
+		byAccount[out[i].AccountID] = &out[i]
+	}
+
+	monthStart := startOfMonth(now)
+	for _, t := range txns {
+		r, ok := byAccount[t.AccountID]
+		if !ok {
+			// A transaction on a hidden account when the caller passed only
+			// visible ones. Skip it rather than inventing a rollup.
+			continue
+		}
+		r.TransactionCount++
+		if t.Date().Before(monthStart) {
+			continue
+		}
+		if t.Amount >= 0 {
+			r.CurrentMonthIncome += t.Amount
+		} else {
+			r.CurrentMonthExpense += -t.Amount
+		}
+	}
+	for i := range out {
+		out[i].CurrentMonthNet = out[i].CurrentMonthIncome - out[i].CurrentMonthExpense
+	}
+
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Balance > out[j].Balance })
+	return out
 }

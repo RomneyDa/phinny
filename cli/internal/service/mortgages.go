@@ -168,6 +168,25 @@ func (s *Service) MortgageSummary(mortgageID string, now time.Time) (mortgage.Su
 	return mortgage.SummaryOf(m, rc, ex, vals, now), nil
 }
 
+// TotalMortgageEquity sums home equity (value minus balance) across every
+// mortgage, which is the piece of net worth that is not an account balance.
+// Equity comes from the amortization engine, never from linked payments.
+func (s *Service) TotalMortgageEquity(now time.Time) (float64, error) {
+	ms, err := s.db.Mortgages()
+	if err != nil {
+		return 0, err
+	}
+	total := 0.0
+	for _, m := range ms {
+		rc, ex, vals, err := s.mortgageChildren(m.ID)
+		if err != nil {
+			return 0, err
+		}
+		total += mortgage.SummaryOf(m, rc, ex, vals, now).Equity
+	}
+	return total, nil
+}
+
 // MortgageSchedule computes the full amortization schedule for a mortgage.
 func (s *Service) MortgageSchedule(mortgageID string) ([]mortgage.Point, error) {
 	m, err := s.findMortgage(mortgageID)

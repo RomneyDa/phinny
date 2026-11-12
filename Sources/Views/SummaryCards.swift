@@ -6,8 +6,19 @@ struct SummaryCards: View {
     let currency: String
 
     var body: some View {
-        // Always a single row: four equal-width cards (each is maxWidth .infinity).
+        // Always a single row: five equal-width cards (each is maxWidth .infinity).
         HStack(spacing: 12) {
+            MetricCard(
+                title: "Net worth",
+                value: Format.currency(summary.netWorth, code: currency),
+                systemImage: "chart.line.uptrend.xyaxis",
+                tint: summary.netWorth >= 0 ? Theme.income : Theme.expense,
+                // Spell out the two parts so the number is auditable, and say
+                // so only when there is actually equity to attribute.
+                detail: summary.hasMortgageEquity
+                    ? "\(Format.currency(summary.totalBalance, code: currency)) accounts + \(Format.currency(summary.mortgageEquity, code: currency)) equity"
+                    : nil
+            )
             MetricCard(
                 title: "Total balance",
                 value: Format.currency(summary.totalBalance, code: currency),
@@ -41,6 +52,8 @@ struct MetricCard: View {
     let value: String
     let systemImage: String
     let tint: Color
+    /// Optional caption under the value, for showing how it was composed.
+    var detail: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -59,6 +72,13 @@ struct MetricCard: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
+            if let detail {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
