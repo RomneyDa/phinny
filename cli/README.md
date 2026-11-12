@@ -71,7 +71,7 @@ phinny connect <setup-token>           Claim a SimpleFIN token + first sync
 phinny disconnect                      Forget the SimpleFIN connection
 phinny sync [--force]                  Sync from SimpleFIN (rate-limited!)
 phinny import <file>                   Import an Apple Card export (CSV/OFX/QFX/QBO)
-phinny dashboard                       Summary cards + chart series
+phinny dashboard                       Summary cards (incl. net worth) + per-account rollups + chart series
 phinny accounts                        List accounts
 phinny accounts hide|show <id>         Hide/show an account on the dashboard
 phinny transactions [--limit N] [--account ID] [--since EPOCH]

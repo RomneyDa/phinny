@@ -200,8 +200,9 @@ func (snap *Snapshot) spendingTransactions() []model.Transaction {
 
 // Dashboard bundles the derived analytics the app/agents render.
 type Dashboard struct {
-	Summary      analytics.Summary        `json:"summary"`
-	MonthlyFlows []analytics.MonthlyFlow  `json:"monthly_flows"`
+	Summary      analytics.Summary         `json:"summary"`
+	Accounts     []analytics.AccountRollup `json:"accounts"`
+	MonthlyFlows []analytics.MonthlyFlow   `json:"monthly_flows"`
 	TopSpending  []analytics.CategorySpend `json:"top_spending"`
 }
 
@@ -213,8 +214,14 @@ func (s *Service) Dashboard() (Dashboard, error) {
 	}
 	now := s.now()
 	spending := snap.spendingTransactions()
+	accounts := snap.visibleAccounts()
+	equity, err := s.TotalMortgageEquity(now)
+	if err != nil {
+		return Dashboard{}, err
+	}
 	return Dashboard{
-		Summary:      analytics.SummaryOf(snap.visibleAccounts(), spending, now),
+		Summary:      analytics.SummaryOf(accounts, spending, now).WithMortgageEquity(equity),
+		Accounts:     analytics.AccountRollups(accounts, spending, now),
 		MonthlyFlows: analytics.MonthlyFlows(spending, 12, now),
 		TopSpending:  analytics.TopSpending(spending, 30, 7, now, snap.categoryLabel),
 	}, nil

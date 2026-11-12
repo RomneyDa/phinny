@@ -130,6 +130,7 @@ final class AppState: ObservableObject {
         paymentLinks = s.paymentLinks
 
         summary = s.dashboard.summary
+        accountRollups = s.dashboard.accounts
         monthlyFlows = s.dashboard.monthlyFlows
         topSpending = s.dashboard.topSpending
         mortgageSummaries = s.mortgageSummaries
@@ -496,6 +497,7 @@ final class AppState: ObservableObject {
     private(set) var visibleAccounts: [Account] = []
     private(set) var visibleTransactions: [Transaction] = []
     private(set) var summary = Analytics.Summary()
+    private(set) var accountRollups: [Analytics.AccountRollup] = []
     private(set) var monthlyFlows: [Analytics.MonthlyFlow] = []
     private(set) var topSpending: [Analytics.CategorySpend] = []
     private(set) var primaryCurrency: String = "USD"

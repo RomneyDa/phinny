@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The main window: a sidebar (Dashboard + each mortgage) and a detail pane.
+/// The main window: a sidebar (Dashboard, Accounts + each mortgage) and a
+/// detail pane.
 struct MainView: View {
     @EnvironmentObject private var state: AppState
     @State private var selection: Nav? = .dashboard
@@ -8,6 +9,7 @@ struct MainView: View {
 
     enum Nav: Hashable {
         case dashboard
+        case accounts
         case categories
         case simplefin
         case mortgage(String)
@@ -18,6 +20,9 @@ struct MainView: View {
             List(selection: $selection) {
                 NavigationLink(value: Nav.dashboard) {
                     Label("Dashboard", systemImage: "chart.pie.fill")
+                }
+                NavigationLink(value: Nav.accounts) {
+                    Label("Accounts", systemImage: "creditcard.fill")
                 }
                 NavigationLink(value: Nav.categories) {
                     Label("Categories", systemImage: "tag.fill")
@@ -53,6 +58,8 @@ struct MainView: View {
         switch selection ?? .dashboard {
         case .dashboard:
             DashboardView()
+        case .accounts:
+            AccountsView()
         case .categories:
             CategoriesView()
         case .simplefin:
