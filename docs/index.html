@@ -4,9 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Phinny - an unofficial SimpleFIN viewer for macOS</title>
-<meta name="description" content="Phinny is an unofficial SimpleFIN viewer for macOS. It syncs your bank data and shows your income and spending in beautiful native charts. Local-first and private." />
+<meta name="description" content="Phinny is an unofficial SimpleFIN viewer for macOS. It tracks your net worth including home equity, and shows your income and spending in beautiful native charts. Local-first and private." />
 <meta property="og:title" content="Phinny - an unofficial SimpleFIN viewer for macOS" />
-<meta property="og:description" content="An unofficial SimpleFIN viewer for macOS. See your income and spending in beautiful native charts. Local-first and private." />
+<meta property="og:description" content="An unofficial SimpleFIN viewer for macOS. Track net worth including home equity, and see your income and spending in beautiful native charts. Local-first and private." />
 <meta property="og:type" content="website" />
 <meta property="og:image" content="/phinny/icon-512.png" />
 <link rel="icon" href="/phinny/icon.png" />
@@ -40,6 +40,8 @@
   ul.features{list-style:none; padding:0; margin:48px 0 0}
   ul.features li{padding:14px 0; border-top:1px solid var(--border); color:var(--muted)}
   ul.features li b{color:var(--text); font-weight:600}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.9em;
+       background:rgba(255,255,255,.07); padding:1px 5px; border-radius:5px; color:var(--text)}
 
   footer{margin-top:56px; padding-top:24px; border-top:1px solid var(--border); color:var(--muted); font-size:14px; text-align:center}
   footer a{color:var(--muted)}
@@ -50,7 +52,7 @@
   <header>
     <img class="icon" src="/phinny/icon.png" alt="Phinny app icon" />
     <h1>Phinny</h1>
-    <p class="tagline">An unofficial <a href="https://simplefin.org">SimpleFIN</a> viewer for macOS. It syncs your bank data into native charts, stored privately on your Mac.</p>
+    <p class="tagline">An unofficial <a href="https://simplefin.org">SimpleFIN</a> viewer for macOS. It syncs your bank data into native charts and tracks your net worth, stored privately on your Mac.</p>
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/RomneyDa/phinny/releases">Download for macOS</a>
       <a class="btn btn-ghost" href="https://github.com/RomneyDa/phinny">View on GitHub</a>
@@ -60,10 +62,14 @@
   <img class="shot" src="/phinny/screenshot.png" alt="Phinny dashboard" />
 
   <ul class="features">
+    <li><b>Net worth, including your home.</b> Account balances plus home equity from the built-in amortization engine, so a mortgage counts toward the total instead of sitting off to one side.</li>
+    <li><b>Per-account breakdown.</b> See every account's balance and its own transactions, not just one combined figure.</li>
     <li><b>Native charts.</b> Income vs. spending, net cash flow, and top spending, drawn with Swift Charts.</li>
     <li><b>Private by design.</b> Data lives in a local SQLite file; bank credentials stay in the macOS Keychain.</li>
     <li><b>Any bank.</b> SimpleFIN connects to thousands of institutions with read-only access.</li>
     <li><b>Apple Card import.</b> Bring in the CSV or OFX file you export from the iPhone Wallet app.</li>
+    <li><b>Mortgage tracking.</b> Amortization, equity over time, and optional Zestimate lookups for the home value.</li>
+    <li><b>Scriptable.</b> The same engine ships as a headless <code>phinny</code> CLI, so every feature in the app is available to scripts and agents.</li>
     <li><b>Try it first.</b> A built-in demo loads sample data so you can explore before connecting.</li>
   </ul>
 
