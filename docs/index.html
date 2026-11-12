@@ -36,6 +36,9 @@
   .btn-ghost{border:1px solid var(--border); color:var(--text)}
 
   .shot{width:100%; border-radius:12px; border:1px solid var(--border); display:block}
+  .shot-figure{margin:0 0 28px}
+  .shot-figure:last-of-type{margin-bottom:0}
+  .shot-figure figcaption{margin-top:10px; font-size:14px; color:var(--muted); text-align:center}
 
   ul.features{list-style:none; padding:0; margin:48px 0 0}
   ul.features li{padding:14px 0; border-top:1px solid var(--border); color:var(--muted)}
@@ -59,7 +62,15 @@
     </div>
   </header>
 
-  <img class="shot" src="/phinny/screenshot.png" alt="Phinny dashboard" />
+  <figure class="shot-figure">
+    <img class="shot" src="/phinny/screenshot.png" alt="The Phinny dashboard, showing net worth, total balance, and monthly income and spending above a 12 month income vs. spending chart" />
+    <figcaption>Net worth across your accounts and your home equity, with the month at a glance.</figcaption>
+  </figure>
+
+  <figure class="shot-figure">
+    <img class="shot" src="/phinny/screenshot-accounts.png" alt="The Phinny accounts view, listing each account with its balance and the transactions for the selected account" />
+    <figcaption>Every account with its own balance, and the transactions behind it.</figcaption>
+  </figure>
 
   <ul class="features">
     <li><b>Net worth, including your home.</b> Account balances plus home equity from the built-in amortization engine, so a mortgage counts toward the total instead of sitting off to one side.</li>

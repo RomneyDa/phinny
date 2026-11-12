@@ -58,7 +58,7 @@ struct AccountsView: View {
                     if let selected {
                         CardSection(
                             selected.name.isEmpty ? "Transactions" : selected.name,
-                            subtitle: detailSubtitle(for: selected)
+                            subtitle: detailSubtitle(for: selected, showing: selectedTransactions.count)
                         ) {
                             TransactionsList(
                                 transactions: selectedTransactions,
@@ -83,10 +83,13 @@ struct AccountsView: View {
         return "\(count) \(noun), totalling \(Format.currency(state.summary.totalBalance, code: state.primaryCurrency))"
     }
 
-    private func detailSubtitle(for rollup: Analytics.AccountRollup) -> String {
-        let count = rollup.transactionCount
+    /// Counts the rows actually listed, which includes transfers (they keep
+    /// their chip here, as on the dashboard). The rollup's own count excludes
+    /// them, since it has to add up to the summary, so using it here would
+    /// label the list with a smaller number than it shows.
+    private func detailSubtitle(for rollup: Analytics.AccountRollup, showing count: Int) -> String {
         let noun = count == 1 ? "transaction" : "transactions"
-        return "\(rollup.orgName), \(count) \(noun) excluding transfers"
+        return "\(rollup.orgName), \(count) \(noun)"
     }
 }
 
