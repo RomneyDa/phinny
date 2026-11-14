@@ -11,6 +11,16 @@ struct DashboardView: View {
         Dictionary(uniqueKeysWithValues: state.visibleAccounts.map { ($0.id, $0.name) })
     }
 
+    /// Says how far back the trend actually reaches, since it is bounded by the
+    /// transaction history the bank returned rather than always being 12 months.
+    private var netWorthSubtitle: String {
+        guard let first = state.netWorthTrend.first?.month, state.netWorthTrend.count > 1 else {
+            return "Accounts plus home equity"
+        }
+        let month = first.formatted(.dateTime.month(.abbreviated).year())
+        return "Accounts plus home equity, since \(month)"
+    }
+
     /// File types the statement importer accepts. OFX/QFX/QBO have no standard
     /// UTType, so we resolve them by extension and fall back to `.data` (the
     /// parser validates the actual content).
@@ -52,6 +62,10 @@ struct DashboardView: View {
                 }
 
                 SummaryCards(summary: state.summary, currency: state.primaryCurrency)
+
+                CardSection("Net Worth", subtitle: netWorthSubtitle) {
+                    NetWorthChart(points: state.netWorthTrend, currency: state.primaryCurrency)
+                }
 
                 CardSection("Income vs. Spending", subtitle: "Last 12 months") {
                     IncomeExpenseChart(flows: state.monthlyFlows, currency: state.primaryCurrency)

@@ -187,6 +187,46 @@ func (s *Service) TotalMortgageEquity(now time.Time) (float64, error) {
 	return total, nil
 }
 
+// EquityAtFunc returns a lookup for total home equity as of any date, built
+// once from every mortgage's amortization schedule so a time series does not
+// re-run the math per point. Dates before a loan starts contribute nothing.
+func (s *Service) EquityAtFunc() (func(time.Time) float64, error) {
+	ms, err := s.db.Mortgages()
+	if err != nil {
+		return nil, err
+	}
+	if len(ms) == 0 {
+		return nil, nil
+	}
+	schedules := make([][]mortgage.Point, 0, len(ms))
+	for _, m := range ms {
+		rc, ex, vals, err := s.mortgageChildren(m.ID)
+		if err != nil {
+			return nil, err
+		}
+		schedules = append(schedules, mortgage.Schedule(m, rc, ex, vals))
+	}
+	return func(at time.Time) float64 {
+		ts := at.Unix()
+		total := 0.0
+		for _, pts := range schedules {
+			// The last scheduled point at or before `at`. Points are in date
+			// order, so a scan stops as soon as it passes the date.
+			var cur *mortgage.Point
+			for i := range pts {
+				if pts[i].Date > ts {
+					break
+				}
+				cur = &pts[i]
+			}
+			if cur != nil {
+				total += cur.Equity
+			}
+		}
+		return total
+	}, nil
+}
+
 // MortgageSchedule computes the full amortization schedule for a mortgage.
 func (s *Service) MortgageSchedule(mortgageID string) ([]mortgage.Point, error) {
 	m, err := s.findMortgage(mortgageID)

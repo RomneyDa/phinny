@@ -200,10 +200,11 @@ func (snap *Snapshot) spendingTransactions() []model.Transaction {
 
 // Dashboard bundles the derived analytics the app/agents render.
 type Dashboard struct {
-	Summary      analytics.Summary         `json:"summary"`
-	Accounts     []analytics.AccountRollup `json:"accounts"`
-	MonthlyFlows []analytics.MonthlyFlow   `json:"monthly_flows"`
-	TopSpending  []analytics.CategorySpend `json:"top_spending"`
+	Summary       analytics.Summary         `json:"summary"`
+	Accounts      []analytics.AccountRollup `json:"accounts"`
+	MonthlyFlows  []analytics.MonthlyFlow   `json:"monthly_flows"`
+	NetWorthTrend []analytics.NetWorthPoint `json:"net_worth_trend"`
+	TopSpending   []analytics.CategorySpend `json:"top_spending"`
 }
 
 // Dashboard computes the summary cards + chart series.
@@ -219,10 +220,17 @@ func (s *Service) Dashboard() (Dashboard, error) {
 	if err != nil {
 		return Dashboard{}, err
 	}
+	equityAt, err := s.EquityAtFunc()
+	if err != nil {
+		return Dashboard{}, err
+	}
 	return Dashboard{
-		Summary:      analytics.SummaryOf(accounts, spending, now).WithMortgageEquity(equity),
-		Accounts:     analytics.AccountRollups(accounts, spending, now),
-		MonthlyFlows: analytics.MonthlyFlows(spending, 12, now),
-		TopSpending:  analytics.TopSpending(spending, 30, 7, now, snap.categoryLabel),
+		Summary:  analytics.SummaryOf(accounts, spending, now).WithMortgageEquity(equity),
+		Accounts: analytics.AccountRollups(accounts, spending, now),
+		// The trend walks balances backwards, so it needs every visible
+		// transaction, not the transfer-filtered spending set.
+		NetWorthTrend: analytics.NetWorthSeries(accounts, snap.visibleTransactions(), 12, now, equityAt),
+		MonthlyFlows:  analytics.MonthlyFlows(spending, 12, now),
+		TopSpending:   analytics.TopSpending(spending, 30, 7, now, snap.categoryLabel),
 	}, nil
 }
