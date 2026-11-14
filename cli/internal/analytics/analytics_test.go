@@ -152,3 +152,122 @@ func TestAccountRollupsWithNoAccounts(t *testing.T) {
 		t.Errorf("len = %d, want 0", len(got))
 	}
 }
+
+func TestNetWorthSeriesWalksBalancesBackwards(t *testing.T) {
+	// One account at 2000 today, with 500 of income this month and 300 of
+	// spending last month, so the end of each earlier month is reconstructable.
+	accounts := []model.Account{{ID: "checking", Balance: 2000}}
+	txns := []model.Transaction{
+		{ID: "a", AccountID: "checking", Posted: epoch(2026, time.November, 5), Amount: 500},
+		{ID: "b", AccountID: "checking", Posted: epoch(2026, time.October, 20), Amount: -300},
+		// An early September row so all three months have data behind them.
+		{ID: "c", AccountID: "checking", Posted: epoch(2026, time.September, 2), Amount: 0},
+	}
+
+	pts := NetWorthSeries(accounts, txns, 3, testNow, nil)
+	if len(pts) != 3 {
+		t.Fatalf("len = %d, want 3", len(pts))
+	}
+
+	// Oldest first: September end, October end, now.
+	closeTo(t, "Sep end", pts[0].Accounts, 1800) // before the -300 and the +500
+	closeTo(t, "Oct end", pts[1].Accounts, 1500) // the -300 has landed
+	closeTo(t, "now", pts[2].Accounts, 2000)     // everything has landed
+
+	// The last point has to agree with the headline card.
+	s := SummaryOf(accounts, txns, testNow)
+	closeTo(t, "last point vs summary", pts[len(pts)-1].NetWorth, s.NetWorth)
+}
+
+func TestNetWorthSeriesAddsEquity(t *testing.T) {
+	accounts := []model.Account{{ID: "checking", Balance: 1000}}
+	// Equity that rises steadily with time. Day granularity, not month, so the
+	// final two points (the 1st and partway through the current month) differ.
+	equityAt := func(at time.Time) float64 {
+		return float64(at.Unix()) / 86400
+	}
+	pts := NetWorthSeries(accounts, nil, 3, testNow, equityAt)
+
+	for _, p := range pts {
+		closeTo(t, "NetWorth = Accounts + Equity", p.NetWorth, p.Accounts+p.Equity)
+	}
+	if !(pts[0].Equity < pts[1].Equity && pts[1].Equity < pts[2].Equity) {
+		t.Errorf("equity should rise across points, got %v %v %v",
+			pts[0].Equity, pts[1].Equity, pts[2].Equity)
+	}
+}
+
+// Transfers net to zero across the two accounts, so including both legs must
+// leave the reconstruction unchanged.
+func TestNetWorthSeriesUnaffectedByTransfers(t *testing.T) {
+	accounts := []model.Account{
+		{ID: "checking", Balance: 1000},
+		{ID: "savings", Balance: 500},
+	}
+	base := []model.Transaction{
+		{ID: "pay", AccountID: "checking", Posted: epoch(2026, time.October, 2), Amount: 900},
+	}
+	withTransfer := append(append([]model.Transaction{}, base...),
+		model.Transaction{ID: "out", AccountID: "checking", Posted: epoch(2026, time.October, 15), Amount: -200},
+		model.Transaction{ID: "in", AccountID: "savings", Posted: epoch(2026, time.October, 15), Amount: 200},
+	)
+
+	a := NetWorthSeries(accounts, base, 3, testNow, nil)
+	b := NetWorthSeries(accounts, withTransfer, 3, testNow, nil)
+	for i := range a {
+		closeTo(t, "point unchanged by a transfer", b[i].Accounts, a[i].Accounts)
+	}
+}
+
+func TestNetWorthSeriesMonthsAreSequential(t *testing.T) {
+	pts := NetWorthSeries([]model.Account{{ID: "a", Balance: 10}}, nil, 6, testNow, nil)
+	if len(pts) != 6 {
+		t.Fatalf("len = %d, want 6", len(pts))
+	}
+	for i := 1; i < len(pts); i++ {
+		if pts[i].Month <= pts[i-1].Month {
+			t.Fatalf("months not ascending at %d: %d then %d", i, pts[i-1].Month, pts[i].Month)
+		}
+	}
+	last := time.Unix(pts[len(pts)-1].Month, 0).UTC()
+	if last.Month() != time.November || last.Year() != 2026 {
+		t.Errorf("last month = %v, want November 2026", last)
+	}
+}
+
+// The provider only returns a window of history. Months before the first
+// transaction have nothing to reconstruct from, so drawing them would be a
+// flat line that reads as "my balance did not move".
+func TestNetWorthSeriesStopsAtTheOldestTransaction(t *testing.T) {
+	accounts := []model.Account{{ID: "checking", Balance: 2000}}
+	txns := []model.Transaction{
+		{ID: "a", AccountID: "checking", Posted: epoch(2026, time.October, 3), Amount: 500},
+	}
+
+	pts := NetWorthSeries(accounts, txns, 12, testNow, nil)
+	if len(pts) == 0 {
+		t.Fatal("no points")
+	}
+	first := time.Unix(pts[0].Month, 0).UTC()
+	if first.Before(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("series starts %v, which predates the oldest transaction", first)
+	}
+	if len(pts) > 3 {
+		t.Errorf("len = %d, want at most 3 months of reconstructable history", len(pts))
+	}
+}
+
+// A transaction dated in the future must not drag the current point away from
+// the summary card, which reports balances as the bank reports them.
+func TestNetWorthSeriesLastPointMatchesCurrentBalances(t *testing.T) {
+	accounts := []model.Account{{ID: "checking", Balance: 2000}}
+	txns := []model.Transaction{
+		{ID: "past", AccountID: "checking", Posted: epoch(2026, time.October, 3), Amount: 500},
+		{ID: "future", AccountID: "checking", Posted: epoch(2026, time.December, 20), Amount: -1434.34},
+	}
+
+	pts := NetWorthSeries(accounts, txns, 6, testNow, nil)
+	last := pts[len(pts)-1]
+	closeTo(t, "last point", last.Accounts, 2000)
+	closeTo(t, "last point vs summary", last.NetWorth, SummaryOf(accounts, txns, testNow).NetWorth)
+}

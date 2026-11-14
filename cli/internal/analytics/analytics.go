@@ -49,6 +49,15 @@ func (s Summary) WithMortgageEquity(equity float64) Summary {
 	return s
 }
 
+// NetWorthPoint is net worth at the end of one month, split into the two parts
+// it is made of so a chart can stack them.
+type NetWorthPoint struct {
+	Month    int64   `json:"month"` // epoch seconds of the first day of the month
+	Accounts float64 `json:"accounts"`
+	Equity   float64 `json:"equity"`
+	NetWorth float64 `json:"net_worth"`
+}
+
 // AccountRollup is the per-account breakdown behind the aggregate summary, so
 // the dashboard can show where a balance actually sits instead of one total.
 // The monthly figures use the same transfer-filtered set as Summary, keeping a
@@ -169,6 +178,81 @@ func SummaryOf(accounts []model.Account, txns []model.Transaction, now time.Time
 	// mortgages layer equity on with WithMortgageEquity.
 	s.NetWorth = s.TotalBalance
 	return s
+}
+
+// NetWorthSeries reconstructs net worth at the end of each of the last `months`
+// months (oldest first, the last point being today).
+//
+// Balances are walked backwards from today: the balance at a past date is the
+// current balance minus everything that has posted since. That makes the series
+// exact for cash and card accounts, where transactions are the only thing that
+// moves a balance. It cannot see market movement in a brokerage or retirement
+// account, which changes a balance with no transaction behind it, so history
+// for those accounts reflects contributions only.
+//
+// Pass every visible transaction, not the transfer-filtered set: a transfer
+// moves money between two tracked accounts and nets to zero across them, while
+// dropping one leg would skew the reconstruction.
+//
+// equityAt supplies home equity as of a date, which lives outside the account
+// tables; pass nil when there are no mortgages.
+func NetWorthSeries(accounts []model.Account, txns []model.Transaction, months int, now time.Time, equityAt func(time.Time) float64) []NetWorthPoint {
+	if months <= 0 {
+		months = 12
+	}
+	current := 0.0
+	for _, a := range accounts {
+		current += a.Balance
+	}
+
+	// Transactions only go back as far as the provider returned them. Walking
+	// past that would draw a flat line that looks like a balance which did not
+	// move, when really there is nothing to reconstruct from, so the series
+	// starts at the first month there is data for.
+	earliest := int64(0)
+	for _, t := range txns {
+		if earliest == 0 || t.Posted < earliest {
+			earliest = t.Posted
+		}
+	}
+
+	thisMonth := startOfMonth(now)
+	out := make([]NetWorthPoint, 0, months)
+	for offset := months - 1; offset >= 0; offset-- {
+		start := thisMonth.AddDate(0, -offset, 0)
+		// Measure at the end of the month, except for the current one, which
+		// is measured as of now so the last point matches the summary card.
+		asOf := start.AddDate(0, 1, 0)
+		if offset == 0 {
+			asOf = now
+		}
+		if earliest != 0 && asOf.Unix() < earliest {
+			continue
+		}
+
+		balance := current
+		if offset > 0 {
+			for _, t := range txns {
+				if t.Date().After(asOf) {
+					balance -= t.Amount
+				}
+			}
+		}
+		// The current month is the balances as they stand, so the last point
+		// always equals the summary card. Undoing a transaction dated in the
+		// future (banks do post them) would otherwise pull the two apart.
+		equity := 0.0
+		if equityAt != nil {
+			equity = equityAt(asOf)
+		}
+		out = append(out, NetWorthPoint{
+			Month:    start.Unix(),
+			Accounts: balance,
+			Equity:   equity,
+			NetWorth: balance + equity,
+		})
+	}
+	return out
 }
 
 // AccountRollups breaks the summary down per account, largest balance first, so

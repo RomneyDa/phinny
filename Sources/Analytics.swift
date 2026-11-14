@@ -75,6 +75,29 @@ enum Analytics {
         }
     }
 
+    /// Net worth at the end of one month, split into the two parts it is made
+    /// of so the chart can stack them.
+    struct NetWorthPoint: Identifiable, Decodable {
+        let month: Date            // first day of the month
+        let accounts: Double
+        let equity: Double
+        let netWorth: Double
+        var id: Date { month }
+
+        enum CodingKeys: String, CodingKey {
+            case month, accounts, equity
+            case netWorth = "net_worth"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let epoch = try c.decode(Int.self, forKey: .month)
+            month = Date(timeIntervalSince1970: TimeInterval(epoch))
+            accounts = try c.decodeIfPresent(Double.self, forKey: .accounts) ?? 0
+            equity = try c.decodeIfPresent(Double.self, forKey: .equity) ?? 0
+            netWorth = try c.decodeIfPresent(Double.self, forKey: .netWorth) ?? (accounts + equity)
+        }
+    }
+
     /// One account's slice of the summary, so the dashboard can show where a
     /// balance sits instead of only the total. Monthly figures use the same
     /// transfer-filtered transactions as `Summary`.
@@ -109,12 +132,14 @@ enum Analytics {
         var summary: Summary
         var accounts: [AccountRollup] = []
         var monthlyFlows: [MonthlyFlow]
+        var netWorthTrend: [NetWorthPoint] = []
         var topSpending: [CategorySpend]
 
         enum CodingKeys: String, CodingKey {
             case summary
             case accounts
             case monthlyFlows = "monthly_flows"
+            case netWorthTrend = "net_worth_trend"
             case topSpending = "top_spending"
         }
 
@@ -124,6 +149,7 @@ enum Analytics {
             // Optional so an older engine without per-account rollups decodes.
             accounts = try c.decodeIfPresent([AccountRollup].self, forKey: .accounts) ?? []
             monthlyFlows = try c.decode([MonthlyFlow].self, forKey: .monthlyFlows)
+            netWorthTrend = try c.decodeIfPresent([NetWorthPoint].self, forKey: .netWorthTrend) ?? []
             topSpending = try c.decode([CategorySpend].self, forKey: .topSpending)
         }
     }

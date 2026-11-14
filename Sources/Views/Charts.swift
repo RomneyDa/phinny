@@ -151,3 +151,77 @@ struct CategoryChart: View {
         }
     }
 }
+
+/// Net worth per month, stacked into the two things it is made of: what sits in
+/// your accounts, and the equity in your home. Stacking rather than plotting a
+/// single line makes it obvious which half is actually moving.
+struct NetWorthChart: View {
+    let points: [Analytics.NetWorthPoint]
+    let currency: String
+
+    /// The series is only as long as the transaction history the bank returned,
+    /// so a single point cannot be drawn as a trend.
+    private var hasTrend: Bool { points.count > 1 }
+
+    var body: some View {
+        if !hasTrend {
+            Text("Not enough history yet to chart a trend.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity)
+        } else {
+            Chart {
+                ForEach(points) { p in
+                    AreaMark(
+                        x: .value("Month", p.month, unit: .month),
+                        y: .value("Amount", p.accounts),
+                        stacking: .standard
+                    )
+                    .foregroundStyle(by: .value("Part", "Accounts"))
+                    .interpolationMethod(.catmullRom)
+
+                    AreaMark(
+                        x: .value("Month", p.month, unit: .month),
+                        y: .value("Amount", p.equity),
+                        stacking: .standard
+                    )
+                    .foregroundStyle(by: .value("Part", "Home equity"))
+                    .interpolationMethod(.catmullRom)
+                }
+
+                ForEach(points) { p in
+                    LineMark(
+                        x: .value("Month", p.month, unit: .month),
+                        y: .value("Net worth", p.netWorth),
+                        series: .value("Part", "Net worth")
+                    )
+                    .foregroundStyle(Theme.accent)
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
+            }
+            .chartForegroundStyleScale([
+                "Accounts": Theme.income.opacity(0.55),
+                "Home equity": Theme.accent.opacity(0.35),
+            ])
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .month)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel(format: .dateTime.month(.abbreviated))
+                }
+            }
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let amount = value.as(Double.self) {
+                            Text(Format.compactCurrency(amount, code: currency))
+                        }
+                    }
+                }
+            }
+            .frame(height: 240)
+        }
+    }
+}
